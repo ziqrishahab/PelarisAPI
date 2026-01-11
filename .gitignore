@@ -1,0 +1,16 @@
+node_modules
+.env
+.env.local
+.env.production
+.env.*.local
+*.log
+logs/
+.DS_Store
+dist
+build
+
+/generated/prisma
+
+# Backup files (may contain sensitive data)
+backups/*.sql
+backups/*.backup

@@ -1,0 +1,561 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== SALES CHANNELS ====================
+
+// Channel Type enum
+enum ChannelType {
+  POS         // Point of Sale (built-in)
+  MARKETPLACE // Tokopedia, Shopee, Lazada, etc
+  WEBSITE     // E-commerce website sendiri
+  SOCIAL      // WhatsApp, Instagram, etc
+  OTHER       // Manual input, etc
+}
+
+// Unified Transaction Status
+enum TransactionStatus {
+  PENDING     // Menunggu pembayaran/konfirmasi
+  ONPROCESS   // Sedang diproses/dikemas
+  SHIPPED     // Dalam pengiriman
+  COMPLETED   // Selesai
+  CANCELLED   // Dibatalkan
+}
+
+// Sales Channel - configurable marketplace/channel
+model SalesChannel {
+  id           String      @id @default(cuid())
+  code         String      @unique  // "POS", "TOKOPEDIA", "SHOPEE", etc
+  name         String               // Display name
+  type         ChannelType @default(MARKETPLACE)
+  icon         String?              // Icon name atau URL
+  color        String?              // Brand color hex
+  isActive     Boolean     @default(true)
+  isBuiltIn    Boolean     @default(false) // POS = true
+  
+  // Integration config (encrypted in production)
+  apiConfig    Json?       // { apiKey, secretKey, shopId, refreshToken, etc }
+  
+  // Field mapping for data transformation
+  fieldMapping Json?       // { "orderId": "order_sn", "status": "order_status" }
+  
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  transactions  Transaction[]
+  channelStocks ChannelStock[]
+
+  @@map("sales_channels")
+}
+
+// Channel Stock - stock allocation per channel
+model ChannelStock {
+  id               String         @id @default(cuid())
+  channel          SalesChannel   @relation(fields: [channelId], references: [id])
+  channelId        String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId String
+  
+  allocatedQty     Int            @default(0)  // Stock dialokasikan ke channel ini
+  reservedQty      Int            @default(0)  // Stock di-reserve (checkout tapi belum bayar)
+  soldQty          Int            @default(0)  // Total terjual via channel ini
+  
+  isActive         Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([channelId, productVariantId])
+  @@map("channel_stocks")
+}
+
+// ==================== USER MANAGEMENT ====================
+
+// User Management
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      UserRole @default(KASIR)
+  cabang    Cabang?  @relation(fields: [cabangId], references: [id])
+  cabangId  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions       Transaction[]
+  processedReturns   Return[]
+  requestedOrders    Order[]          @relation("RequestedOrders")
+  processedOrders    Order[]          @relation("ProcessedOrders")
+  stockTransfers     StockTransfer[]
+  stockAdjustments   StockAdjustment[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  ADMIN
+  KASIR
+}
+
+// Return/Refund Management
+model Return {
+  id              String       @id @default(cuid())
+  returnNo        String       @unique // RET-20251124-0001
+  transaction     Transaction  @relation(fields: [transactionId], references: [id])
+  transactionId   String
+  cabang          Cabang       @relation(fields: [cabangId], references: [id])
+  cabangId        String
+  processedBy     User         @relation(fields: [processedById], references: [id])
+  processedById   String
+  reason          ReturnReason
+  notes           String?
+  subtotal        Float // Total nilai return
+  refundMethod    PaymentMethod
+  refundAmount    Float
+  status          ReturnStatus @default(PENDING)
+  approvedBy      String? // Manager yang approve
+  approvedAt      DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  items ReturnItem[]
+
+  @@map("returns")
+}
+
+enum ReturnReason {
+  DAMAGED // Barang Rusak
+  WRONG_ITEM // Salah Barang
+  EXPIRED // Kadaluarsa
+  CUSTOMER_REQUEST // Permintaan Customer
+  OTHER // Lainnya
+}
+
+enum ReturnStatus {
+  PENDING // Menunggu persetujuan
+  REJECTED // Ditolak
+  COMPLETED // Disetujui & Selesai (stock sudah dikembalikan)
+}
+
+// Item yang diretur
+model ReturnItem {
+  id               String         @id @default(cuid())
+  return           Return         @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  returnId         String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+  productName      String // Snapshot
+  variantInfo      String // Snapshot
+  sku              String? // Snapshot
+  quantity         Int // Jumlah yang diretur
+  price            Float // Harga saat transaksi
+  subtotal         Float // quantity * price
+  createdAt        DateTime       @default(now())
+
+  @@map("return_items")
+}
+
+// Cabang/Branch
+model Cabang {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users              User[]
+  stocks             Stock[]
+  transactions       Transaction[]
+  returns            Return[]
+  printerSettings    PrinterSettings?
+  requestedOrders    Order[]
+  transfersFrom      StockTransfer[]  @relation("TransfersFrom")
+  transfersTo        StockTransfer[]  @relation("TransfersTo")
+  stockAdjustments   StockAdjustment[]
+  stockAlerts        StockAlert[]
+
+  @@map("cabang")
+}
+
+// Kategori Produk (Seragam, Perlengkapan, dll)
+model Category {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+
+  @@map("categories")
+}
+
+// Produk (Baju Seragam SD, Celana, dll)
+model Product {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  category    Category    @relation(fields: [categoryId], references: [id])
+  categoryId  String
+  productType ProductType @default(VARIANT) // SINGLE atau VARIANT
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  variants     ProductVariant[]
+  variantTypes VariantType[]
+
+  @@map("products")
+}
+
+// Tipe Varian (Ukuran, Warna, dll) - for dynamic variant creation
+model VariantType {
+  id        String   @id @default(cuid())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+  name      String // "Ukuran", "Warna", "Material"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  options VariantOption[]
+
+  @@unique([productId, name])
+  @@map("variant_types")
+}
+
+// Opsi dari Tipe Varian (6, 8, 10 untuk Ukuran, dst)
+model VariantOption {
+  id            String      @id @default(cuid())
+  variantType   VariantType @relation(fields: [variantTypeId], references: [id], onDelete: Cascade)
+  variantTypeId String
+  value         String // "6", "8", "10", "Merah", "Biru"
+  createdAt     DateTime    @default(now())
+
+  @@unique([variantTypeId, value])
+  @@map("variant_options")
+}
+
+enum ProductType {
+  SINGLE // Produk tanpa varian (harga di product)
+  VARIANT // Produk dengan varian (harga di variant)
+}
+
+// Variant Produk (Size/Nomor: 6, 8, 10, dst)
+model ProductVariant {
+  id           String   @id @default(cuid())
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId    String
+  variantName  String // "Size | Color | Material" (pipe-separated, supports up to 3 attributes)
+  variantValue String // "M | Red | Cotton" (pipe-separated values)
+  sku          String   @unique // SKU/Barcode
+  
+  // Marketplace fields (optional)
+  weight       Int?     // Weight in grams (for shipping calculation by marketplace)
+  length       Int?     // Length in cm
+  width        Int?     // Width in cm
+  height       Int?     // Height in cm
+  imageUrl     String?  // External image URL (for marketplace sync)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  stocks             Stock[]
+  channelStocks      ChannelStock[]
+  transactionItems   TransactionItem[]
+  returnItems        ReturnItem[]
+  priceDiscrepancies PriceDiscrepancy[]
+  orders             Order[]
+  stockTransfers     StockTransfer[]
+  stockAdjustments   StockAdjustment[]
+  stockAlerts        StockAlert[]
+
+  @@unique([productId, variantName, variantValue])
+  @@map("product_variants")
+}
+
+// Stok per Cabang
+model Stock {
+  id               String         @id @default(cuid())
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId String
+  cabang           Cabang         @relation(fields: [cabangId], references: [id])
+  cabangId         String
+  quantity         Int            @default(0)
+  price            Float          @default(0) // Price per cabang
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  adjustments StockAdjustment[]
+
+  @@unique([productVariantId, cabangId])
+  @@map("stocks")
+}
+
+// Stock Adjustment History
+model StockAdjustment {
+  id               String              @id @default(cuid())
+  productVariant   ProductVariant      @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+  stock            Stock               @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  stockId          String
+  cabang           Cabang              @relation(fields: [cabangId], references: [id])
+  cabangId         String
+  adjustedBy       User                @relation(fields: [adjustedById], references: [id])
+  adjustedById     String
+  previousQty      Int // Stok sebelumnya
+  newQty           Int // Stok baru
+  difference       Int // newQty - previousQty
+  reason           AdjustmentReason?
+  notes            String? // Custom reason
+  createdAt        DateTime            @default(now())
+
+  @@map("stock_adjustments")
+}
+
+enum AdjustmentReason {
+  STOCK_OPNAME // Stok opname
+  DAMAGED // Barang rusak
+  LOST // Barang hilang
+  SUPPLIER_RETURN // Return supplier
+  INPUT_ERROR // Koreksi input
+  OTHER // Lainnya
+}
+
+// Transaksi Penjualan (POS + Marketplace)
+model Transaction {
+  id             String            @id @default(cuid())
+  transactionNo  String            @unique // INV-20251107-0001
+  
+  // Channel & Status
+  channel        SalesChannel?     @relation(fields: [channelId], references: [id])
+  channelId      String?           // FK to SalesChannel (null = legacy POS)
+  status         TransactionStatus @default(COMPLETED) // Unified status
+  
+  // Branch & Staff
+  cabang         Cabang            @relation(fields: [cabangId], references: [id])
+  cabangId       String
+  kasir          User?             @relation(fields: [kasirId], references: [id])
+  kasirId        String?           // Optional - marketplace tidak perlu kasir
+  
+  // Customer Info
+  customerName   String?
+  customerPhone  String?
+  buyerUsername  String?           // Username pembeli di marketplace
+  
+  // Amounts
+  subtotal       Float
+  discount       Float             @default(0)
+  tax            Float             @default(0)
+  shippingCost   Float             @default(0) // Ongkir
+  platformFee    Float             @default(0) // Fee marketplace
+  total          Float
+  
+  // Payment (for POS)
+  paymentMethod  PaymentMethod?
+  paymentStatus  PaymentStatus     @default(COMPLETED)
+  bankName       String?           // Nama bank untuk DEBIT/TRANSFER
+  referenceNo    String?           // Nomor referensi/approval
+  cardLastDigits String?           // 4 digit terakhir kartu (DEBIT)
+  
+  // Split Payment (POS only)
+  isSplitPayment Boolean           @default(false)
+  paymentAmount1 Float?
+  paymentMethod2 PaymentMethod?
+  paymentAmount2 Float?
+  bankName2      String?
+  referenceNo2   String?
+  
+  // External Marketplace Data
+  externalOrderId  String?         // Order ID dari marketplace
+  externalInvoice  String?         // Invoice/AWB number
+  externalStatus   String?         // Status asli dari marketplace
+  externalData     Json?           // Data tambahan (shipping, courier, etc)
+  
+  // Device/Platform Source
+  deviceSource     String?         // WEB, ANDROID, IOS, WINDOWS, TOKOPEDIA, SHOPEE, etc
+  
+  notes          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  items              TransactionItem[]
+  priceDiscrepancies PriceDiscrepancy[]
+  returns            Return[]
+
+  @@index([channelId])
+  @@index([status])
+  @@index([externalOrderId])
+  @@map("transactions")
+}
+
+enum PaymentMethod {
+  CASH
+  DEBIT
+  TRANSFER
+  QRIS
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+// Item per Transaksi
+model TransactionItem {
+  id               String         @id @default(cuid())
+  transaction      Transaction    @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transactionId    String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+  productName      String // Snapshot nama produk
+  variantInfo      String // Snapshot variant (Size: 10)
+  sku              String? // SKU snapshot
+  quantity         Int
+  price            Float // Harga saat transaksi
+  subtotal         Float
+  createdAt        DateTime       @default(now())
+
+  @@map("transaction_items")
+}
+
+// Price Discrepancy - Track price differences from offline transactions
+model PriceDiscrepancy {
+  id               String         @id @default(cuid())
+  transaction      Transaction    @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transactionId    String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+  expectedPrice    Float // Current price in database
+  actualPrice      Float // Price used in transaction (offline data)
+  difference       Float // expectedPrice - actualPrice
+  reason           String // Explanation
+  resolved         Boolean        @default(false)
+  resolvedBy       String? // User ID who resolved
+  resolvedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@map("price_discrepancies")
+}
+
+// Global Settings
+model Settings {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model PrinterSettings {
+  id               String   @id @default(cuid())
+  cabangId         String?  @unique
+  autoPrintEnabled Boolean  @default(true)
+  printerName      String?
+  paperWidth       Int      @default(80)
+  storeName        String   @default("Pelaris.id")
+  branchName       String?
+  address          String?
+  phone            String?
+  footerText1      String?
+  footerText2      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  cabang Cabang? @relation(fields: [cabangId], references: [id])
+
+  @@map("printer_settings")
+}
+
+// Order Management - Product requests from KASIR
+model Order {
+  id              String      @id @default(cuid())
+  orderNo         String      @unique // ORD-20251126-0001
+  requestedBy     User        @relation("RequestedOrders", fields: [requestedById], references: [id])
+  requestedById   String
+  cabang          Cabang      @relation(fields: [cabangId], references: [id])
+  cabangId        String
+  productName     String
+  productType     ProductType @default(SINGLE)
+  categoryId      String?
+  categoryName    String?
+  price           Float?
+  quantity        Int?
+  status          OrderStatus @default(PENDING)
+  notes           String?
+  rejectionReason String?
+  processedBy     User?       @relation("ProcessedOrders", fields: [processedById], references: [id])
+  processedById   String?
+  processedAt     DateTime?
+  productVariant  ProductVariant? @relation(fields: [productVariantId], references: [id])
+  productVariantId String? // Set when order is approved and product created
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING // Menunggu proses
+  APPROVED // Disetujui, produk dibuat
+  REJECTED // Ditolak
+}
+
+// Stock Transfer between branches
+model StockTransfer {
+  id              String         @id @default(cuid())
+  transferNo      String         @unique // TRF-20251126-0001
+  productVariant  ProductVariant @relation(fields: [variantId], references: [id])
+  variantId       String
+  fromCabang      Cabang         @relation("TransfersFrom", fields: [fromCabangId], references: [id])
+  fromCabangId    String
+  toCabang        Cabang         @relation("TransfersTo", fields: [toCabangId], references: [id])
+  toCabangId      String
+  quantity        Int
+  transferredBy   User           @relation(fields: [transferredById], references: [id])
+  transferredById String
+  notes           String?
+  status          TransferStatus @default(COMPLETED)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("stock_transfers")
+}
+
+enum TransferStatus {
+  PENDING // Menunggu approval
+  COMPLETED // Selesai
+  CANCELLED // Dibatalkan
+}
+
+// Stock Alert (Low Stock Notification)
+model StockAlert {
+  id               String         @id @default(cuid())
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId String
+  cabang           Cabang         @relation(fields: [cabangId], references: [id])
+  cabangId         String
+  minStock         Int // Minimum stock threshold
+  isActive         Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([productVariantId, cabangId])
+  @@map("stock_alerts")
+}
