@@ -8,6 +8,8 @@
 
 REST API untuk Pelaris.id - Omnichannel POS System.
 
+**Repository:** [https://github.com/rejaldev/Pelaris.id-api](https://github.com/rejaldev/Pelaris.id-api)
+
 ## Features
 
 - Multi-cabang stock management
