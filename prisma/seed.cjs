@@ -116,28 +116,31 @@ async function main() {
 
   console.log('✅ Categories created:', categories.length);
 
-  // ============ CHANNELS ============
+  // ============ SALES CHANNELS ============
   const channelData = [
-    { name: 'POS', description: 'Point of Sale - penjualan langsung di toko' },
-    { name: 'Online', description: 'Penjualan online via website/app' },
-    { name: 'WhatsApp', description: 'Penjualan via WhatsApp' },
-    { name: 'Marketplace', description: 'Penjualan via marketplace (Tokopedia, Shopee, dll)' }
+    { code: 'POS', name: 'Point of Sale', type: 'OFFLINE', isBuiltIn: true },
+    { code: 'WHATSAPP', name: 'WhatsApp', type: 'SOCIAL' },
+    { code: 'TOKOPEDIA', name: 'Tokopedia', type: 'MARKETPLACE' },
+    { code: 'SHOPEE', name: 'Shopee', type: 'MARKETPLACE' }
   ];
 
   const channels = await Promise.all(
     channelData.map(ch =>
-      prisma.channel.upsert({
-        where: { name: ch.name },
+      prisma.salesChannel.upsert({
+        where: { code: ch.code },
         update: {},
         create: {
+          code: ch.code,
           name: ch.name,
-          description: ch.description
+          type: ch.type,
+          isBuiltIn: ch.isBuiltIn || false,
+          isActive: true
         }
       })
     )
   );
 
-  console.log('✅ Channels created:', channels.length);
+  console.log('✅ Sales Channels created:', channels.length);
 
   // ============ SETTINGS ============
   const settingsData = [
@@ -214,7 +217,7 @@ async function main() {
   console.log('   • 1 Cabang (Cabang Pusat)');
   console.log('   • 2 Users (Owner + Kasir)');
   console.log(`   • ${categories.length} Categories`);
-  console.log(`   • ${channels.length} Sales Channels`);
+  console.log(`   • ${channels.length} Sales Channels (POS, WhatsApp, Tokopedia, Shopee)`);
   console.log(`   • ${settingsData.length} App Settings`);
   console.log('   • 1 Printer Settings');
   console.log('');
