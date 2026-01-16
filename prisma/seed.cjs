@@ -117,8 +117,9 @@ async function main() {
   console.log('✅ Categories created:', categories.length);
 
   // ============ SALES CHANNELS ============
+  // ChannelType: POS, MARKETPLACE, WEBSITE, SOCIAL, OTHER
   const channelData = [
-    { code: 'POS', name: 'Point of Sale', type: 'OFFLINE', isBuiltIn: true },
+    { code: 'POS', name: 'Point of Sale', type: 'POS', isBuiltIn: true },
     { code: 'WHATSAPP', name: 'WhatsApp', type: 'SOCIAL' },
     { code: 'TOKOPEDIA', name: 'Tokopedia', type: 'MARKETPLACE' },
     { code: 'SHOPEE', name: 'Shopee', type: 'MARKETPLACE' }
