@@ -6,6 +6,7 @@ import logger, { logError } from '../lib/logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ExcelHelper } from '../lib/excel.js';
+import { validate, createCategorySchema, updateCategorySchema } from '../lib/validators.js';
 
 type Variables = {
   user: AuthUser;
@@ -51,7 +52,15 @@ const products = new Hono<{ Variables: Variables }>();
 // Get all categories
 products.get('/categories', authMiddleware, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const categories = await prisma.category.findMany({
+      where: { tenantId },
       include: {
         _count: {
           select: { 
@@ -72,15 +81,23 @@ products.get('/categories', authMiddleware, async (c) => {
 // Create category (Owner/Manager only)
 products.post('/categories', authMiddleware, ownerOrManager, async (c) => {
   try {
-    const body = await c.req.json();
-    const { name, description } = body as { name: string; description?: string };
-
-    if (!name) {
-      return c.json({ error: 'Category name is required' }, 400);
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
     }
 
+    const body = await c.req.json();
+    const validation = validate(createCategorySchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
+    }
+
+    const { name, description } = validation.data;
+
     const category = await prisma.category.create({
-      data: { name, description }
+      data: { name, description, tenantId }
     });
 
     emitCategoryUpdated(category);
@@ -97,12 +114,33 @@ products.post('/categories', authMiddleware, ownerOrManager, async (c) => {
 // Update category (Owner/Manager only)
 products.put('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const id = c.req.param('id');
     const body = await c.req.json();
-    const { name, description } = body as { name: string; description?: string };
+    const validation = validate(updateCategorySchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
+    }
+
+    const { name, description } = validation.data;
 
     if (!name) {
       return c.json({ error: 'Category name is required' }, 400);
+    }
+
+    // Verify category belongs to tenant
+    const existingCategory = await prisma.category.findUnique({
+      where: { id }
+    });
+
+    if (!existingCategory || existingCategory.tenantId !== tenantId) {
+      return c.json({ error: 'Category not found' }, 404);
     }
 
     const category = await prisma.category.update({
@@ -127,12 +165,28 @@ products.put('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
 // Delete category (Owner/Manager only)
 products.delete('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const id = c.req.param('id');
+    
+    // Verify category belongs to tenant
+    const existingCategory = await prisma.category.findUnique({
+      where: { id }
+    });
+
+    if (!existingCategory || existingCategory.tenantId !== tenantId) {
+      return c.json({ error: 'Category not found' }, 404);
+    }
     
     // Use transaction for atomic deletion of category and related data
     const deletedCount = await prisma.$transaction(async (tx) => {
       const categoryProducts = await tx.product.findMany({
-        where: { categoryId: id },
+        where: { categoryId: id, tenantId },
         include: { variants: true }
       });
 
@@ -180,11 +234,20 @@ products.delete('/categories/:id', authMiddleware, ownerOrManager, async (c) => 
 // Get all products with filters
 products.get('/', authMiddleware, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const categoryId = c.req.query('categoryId');
     const search = c.req.query('search');
     const isActive = c.req.query('isActive');
 
-    const where: any = {};
+    const where: any = {
+      tenantId: tenantId // Filter by tenant
+    };
     if (categoryId) where.categoryId = categoryId;
     if (isActive !== undefined) where.isActive = isActive === 'true';
 
@@ -245,8 +308,21 @@ products.get('/', authMiddleware, async (c) => {
 // Download Template
 products.get('/template', authMiddleware, async (c) => {
   try {
-    const categories = await prisma.category.findMany({ orderBy: { name: 'asc' } });
-    const cabangs = await prisma.cabang.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
+    const categories = await prisma.category.findMany({ 
+      where: { tenantId },
+      orderBy: { name: 'asc' } 
+    });
+    const cabangs = await prisma.cabang.findMany({ 
+      where: { isActive: true, tenantId }, 
+      orderBy: { name: 'asc' } 
+    });
     
     if (categories.length === 0 || cabangs.length === 0) {
       return c.json({ 
@@ -542,6 +618,13 @@ products.get('/adjustments/all', authMiddleware, ownerOrManager, async (c) => {
 // Get single product by ID
 products.get('/:id', authMiddleware, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const id = c.req.param('id');
     
     const product = await prisma.product.findUnique({
@@ -556,7 +639,7 @@ products.get('/:id', authMiddleware, async (c) => {
       }
     });
 
-    if (!product) {
+    if (!product || product.tenantId !== tenantId) {
       return c.json({ error: 'Product not found' }, 404);
     }
 
@@ -619,11 +702,27 @@ products.get('/stock/:variantId/:cabangId/adjustments', authMiddleware, async (c
 // Create product (Owner/Manager only)
 products.post('/', authMiddleware, ownerOrManager, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const body = await c.req.json() as ProductBody;
     const { name, description, categoryId, productType, variants, sku, stocks } = body;
 
     if (!name || !categoryId || !productType) {
       return c.json({ error: 'Name, category, and product type are required' }, 400);
+    }
+
+    // Verify category belongs to tenant
+    const category = await prisma.category.findUnique({
+      where: { id: categoryId }
+    });
+
+    if (!category || category.tenantId !== tenantId) {
+      return c.json({ error: 'Category not found or access denied' }, 404);
     }
 
     if (productType === 'SINGLE') {
@@ -635,7 +734,7 @@ products.post('/', authMiddleware, ownerOrManager, async (c) => {
 
     const product = await prisma.$transaction(async (tx) => {
       const newProduct = await tx.product.create({
-        data: { name, description, categoryId, productType: productType as any }
+        data: { name, description, categoryId, productType: productType as any, tenantId }
       });
 
       if (productType === 'VARIANT' && variants && variants.length > 0) {
@@ -708,9 +807,36 @@ products.post('/', authMiddleware, ownerOrManager, async (c) => {
 // Update product (Owner/Manager only)
 products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const id = c.req.param('id');
     const body = await c.req.json() as ProductBody;
     const { name, description, categoryId, productType, isActive, variants } = body;
+
+    // Verify product belongs to tenant
+    const existingProduct = await prisma.product.findUnique({
+      where: { id }
+    });
+
+    if (!existingProduct || existingProduct.tenantId !== tenantId) {
+      return c.json({ error: 'Product not found' }, 404);
+    }
+
+    // Verify category belongs to tenant if categoryId is being updated
+    if (categoryId && categoryId !== existingProduct.categoryId) {
+      const category = await prisma.category.findUnique({
+        where: { id: categoryId }
+      });
+
+      if (!category || category.tenantId !== tenantId) {
+        return c.json({ error: 'Category not found or access denied' }, 404);
+      }
+    }
 
     const product = await prisma.$transaction(async (tx) => {
       const updatedProduct = await tx.product.update({
@@ -836,6 +962,13 @@ products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
 // Delete product (Owner/Manager only)
 products.delete('/:id', authMiddleware, ownerOrManager, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const id = c.req.param('id');
     
     const product = await prisma.product.findUnique({
@@ -847,7 +980,7 @@ products.delete('/:id', authMiddleware, ownerOrManager, async (c) => {
       }
     });
 
-    if (!product) {
+    if (!product || product.tenantId !== tenantId) {
       return c.json({ error: 'Product not found' }, 404);
     }
 
@@ -1014,7 +1147,16 @@ products.post('/import', authMiddleware, ownerOrManager, async (c) => {
     }
 
     // Get all categories and cabangs
-    const categories = await prisma.category.findMany();
+        const user = c.get('user');
+        const tenantId = user.tenantId;
+        
+        if (!tenantId) {
+          return c.json({ error: 'Tenant scope required' }, 400);
+        }
+
+        const categories = await prisma.category.findMany({
+          where: { tenantId }
+        });
     const cabangs = await prisma.cabang.findMany();
 
     const errors: any[] = [];
@@ -1326,6 +1468,7 @@ products.post('/import', authMiddleware, ownerOrManager, async (c) => {
             categoryId: productData.categoryId,
             productType: productData.productType,
             isActive: productData.isActive,
+            tenantId: tenantId,
             variants: {
               create: productData.variants.map((v: any) => ({
                 sku: v.sku,

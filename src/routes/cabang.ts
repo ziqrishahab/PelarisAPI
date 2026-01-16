@@ -2,12 +2,16 @@ import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, ownerOnly } from '../middleware/auth.js';
 import { logError } from '../lib/logger.js';
+import { validate, createCabangSchema, updateCabangSchema } from '../lib/validators.js';
 
 const cabang = new Hono();
 
 // Get all cabangs
 cabang.get('/', authMiddleware, async (c) => {
   try {
+    const authUser = c.get('user');
+    const tenantId: string | undefined = authUser && authUser.tenantId ? authUser.tenantId : undefined;
+
     const cabangs = await prisma.cabang.findMany({
       include: {
         _count: {
@@ -18,6 +22,7 @@ cabang.get('/', authMiddleware, async (c) => {
           }
         }
       },
+      where: tenantId ? { tenantId } : undefined,
       orderBy: { name: 'asc' }
     });
     return c.json(cabangs);
@@ -60,14 +65,20 @@ cabang.get('/:id', authMiddleware, async (c) => {
 // Create cabang (Owner only)
 cabang.post('/', authMiddleware, ownerOnly, async (c) => {
   try {
-    const { name, address, phone } = await c.req.json();
+    const authUser = c.get('user');
+    const tenantId = authUser?.tenantId;
 
-    if (!name || !address) {
-      return c.json({ error: 'Name and address are required' }, 400);
+    const body = await c.req.json();
+    const validation = validate(createCabangSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
 
+    const { name, address, phone } = validation.data;
+
+    if (!tenantId) return c.json({ error: 'Missing tenant scope' }, 400);
     const result = await prisma.cabang.create({
-      data: { name, address, phone }
+      data: { name, address, phone, tenantId: tenantId }
     });
 
     return c.json(result, 201);
@@ -84,11 +95,21 @@ cabang.post('/', authMiddleware, ownerOnly, async (c) => {
 cabang.put('/:id', authMiddleware, ownerOnly, async (c) => {
   try {
     const id = c.req.param('id');
-    const { name, address, phone, isActive } = await c.req.json();
+    const authUser = c.get('user');
+    const tenantId: string | undefined = authUser && authUser.tenantId ? authUser.tenantId : undefined;
 
+    const body = await c.req.json();
+    const validation = validate(updateCabangSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
+    }
+
+    const { name, address, phone, isActive } = validation.data;
+
+    if (!tenantId) return c.json({ error: 'Missing tenant scope' }, 400);
     const result = await prisma.cabang.update({
       where: { id },
-      data: { name, address, phone, isActive }
+      data: { name, address, phone, isActive, tenantId: tenantId }
     });
 
     return c.json(result);
@@ -107,16 +128,23 @@ cabang.delete('/:id', authMiddleware, ownerOnly, async (c) => {
     const id = c.req.param('id');
 
     // Use transaction to ensure atomic operation
+    const authUser = c.get('user');
+    const tenantId = authUser?.tenantId;
+
     const result = await prisma.$transaction(async (tx) => {
-      const cabangData = await tx.cabang.findUnique({
-        where: { id },
-        include: {
+      const cabangData = await tx.cabang.findFirst({
+        where: { id, tenantId: tenantId! },
+        select: {
+          id: true,
+          name: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          tenantId: true,
+          address: true,
+          phone: true,
           _count: {
-            select: {
-              users: true,
-              stocks: true,
-              transactions: true
-            }
+            select: { users: true, stocks: true, transactions: true }
           }
         }
       });
@@ -125,15 +153,19 @@ cabang.delete('/:id', authMiddleware, ownerOnly, async (c) => {
         throw new Error('Cabang not found');
       }
 
-      if (cabangData._count.users > 0) {
-        throw new Error(`Cannot delete cabang. It has ${cabangData._count.users} user(s). Reassign or delete users first.`);
+      const usersCount = cabangData._count?.users ?? 0;
+      const stocksCount = cabangData._count?.stocks ?? 0;
+      const transactionsCount = cabangData._count?.transactions ?? 0;
+
+      if (usersCount > 0) {
+        throw new Error(`Cannot delete cabang. It has ${usersCount} user(s). Reassign or delete users first.`);
       }
 
-      if (cabangData._count.stocks > 0) {
-        throw new Error(`Cannot delete cabang. It has ${cabangData._count.stocks} stock record(s). Transfer or delete stocks first.`);
+      if (stocksCount > 0) {
+        throw new Error(`Cannot delete cabang. It has ${stocksCount} stock record(s). Transfer or delete stocks first.`);
       }
 
-      if (cabangData._count.transactions > 0) {
+      if (transactionsCount > 0) {
         const updated = await tx.cabang.update({
           where: { id },
           data: { isActive: false }

@@ -13,7 +13,7 @@ interface RateLimitOptions {
   windowMs?: number;      // Time window in milliseconds
   max?: number;           // Max requests per window
   message?: string;       // Error message
-  keyGenerator?: (c: Context) => string;  // Custom key generator
+  keyGenerator?: (c: Context) => string | Promise<string>;  // Custom key generator
 }
 
 // In-memory store (fallback when Redis is not available)
@@ -115,18 +115,15 @@ export function rateLimiter(options: RateLimitOptions = {}) {
     windowMs = 5 * 60 * 1000,   // 5 minutes (faster reset)
     max = 100,                   // 100 requests per window
     message = 'Too many requests, please try again later.',
-    keyGenerator = (c: Context) => {
+    keyGenerator = async (c: Context) => {
       // Get IP from various headers (for proxied requests)
-      const forwarded = c.req.header('x-forwarded-for');
-      const realIp = c.req.header('x-real-ip');
-      const cfIp = c.req.header('cf-connecting-ip'); // Cloudflare
-      
-      return forwarded?.split(',')[0]?.trim() || realIp || cfIp || 'unknown';
+      const { getClientIP } = await import('../lib/utils.js');
+      return getClientIP(c);
     }
   } = options;
 
   return async (c: Context, next: Next): Promise<Response | void> => {
-    const key = keyGenerator(c);
+    const key = await keyGenerator(c);
     const now = Date.now();
 
     // Get current rate limit data
@@ -179,16 +176,14 @@ export function loginRateLimiter(options: RateLimitOptions = {}) {
   const {
     windowMs = 15 * 60 * 1000,  // 15 minutes
     max = 10,                    // 10 failed attempts
-    keyGenerator = (c: Context) => {
-      const forwarded = c.req.header('x-forwarded-for');
-      const realIp = c.req.header('x-real-ip');
-      const cfIp = c.req.header('cf-connecting-ip');
-      return `login:${forwarded?.split(',')[0]?.trim() || realIp || cfIp || 'unknown'}`;
+    keyGenerator = async (c: Context) => {
+      const { getClientIP } = await import('../lib/utils.js');
+      return `login:${getClientIP(c)}`;
     }
   } = options;
 
   return async (c: Context, next: Next): Promise<Response | void> => {
-    const key = keyGenerator(c);
+    const key = await keyGenerator(c);
     const now = Date.now();
 
     // Get current rate limit data for failed logins

@@ -1,4 +1,5 @@
 import { Context, Next } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { verifyToken } from '../lib/jwt.js';
 
 export interface AuthUser {
@@ -6,6 +7,7 @@ export interface AuthUser {
   email: string;
   role: string;
   cabangId: string | null;
+  tenantId?: string | null;
 }
 
 // Extend Hono's Context with user
@@ -18,7 +20,13 @@ declare module 'hono' {
 export const authMiddleware = async (c: Context, next: Next): Promise<Response | void> => {
   try {
     const authHeader = c.req.header('Authorization');
-    const token = authHeader?.replace('Bearer ', '');
+    const bearerToken = authHeader?.startsWith('Bearer ')
+      ? authHeader.replace('Bearer ', '')
+      : undefined;
+
+    // Prefer explicit Bearer token, fallback to HttpOnly cookie
+    const cookieToken = getCookie(c, 'token');
+    const token = bearerToken || cookieToken;
 
     if (!token) {
       return c.json({ error: 'Token tidak ditemukan' }, 401);
@@ -28,6 +36,18 @@ export const authMiddleware = async (c: Context, next: Next): Promise<Response |
 
     if (!decoded) {
       return c.json({ error: 'Token tidak valid' }, 401);
+    }
+
+    // CSRF protection for state-changing requests when csrfToken is present in payload
+    const method = c.req.method.toUpperCase();
+    const isSafeMethod = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+    const csrfToken = (decoded as any).csrfToken as string | undefined;
+    const csrfHeader = c.req.header('x-csrf-token');
+
+    if (!isSafeMethod && csrfToken) {
+      if (!csrfHeader || csrfHeader !== csrfToken) {
+        return c.json({ error: 'CSRF token tidak valid' }, 403);
+      }
     }
 
     c.set('user', decoded);

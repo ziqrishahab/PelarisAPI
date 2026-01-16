@@ -6,14 +6,38 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Seeding database...');
 
-  // Buat Cabang
+  // Buat Tenant dulu
+  const tenant = await prisma.tenant.upsert({
+    where: { subdomain: 'harapan-abah' },
+    update: {},
+    create: {
+      subdomain: 'harapan-abah',
+      storeName: 'Harapan Abah',
+      email: 'harapanabah@gmail.com',
+      phone: '081234567890',
+      address: 'Jl. Contoh No. 123',
+      maxUsers: 10,
+      maxProducts: 1000,
+      maxCabang: 5
+    }
+  });
+
+  console.log('✅ Tenant created:', tenant.storeName);
+
+  // Buat Cabang (dengan tenantId)
   const cabang = await prisma.cabang.upsert({
-    where: { name: 'Cabang Pusat' },
+    where: { 
+      tenantId_name: {
+        tenantId: tenant.id,
+        name: 'Cabang Pusat'
+      }
+    },
     update: {},
     create: {
       name: 'Cabang Pusat',
       address: 'Jl. Contoh No. 123',
-      phone: '081234567890'
+      phone: '081234567890',
+      tenantId: tenant.id
     }
   });
 
@@ -23,16 +47,24 @@ async function main() {
   const hashedPassword = await bcrypt.hash('owner123', 10);
   
   const owner = await prisma.user.upsert({
-    where: { email: 'ziqrishahab@gmail.com' },
+    where: { 
+      tenantId_email: {
+        tenantId: tenant.id,
+        email: 'owner@toko.com'
+      }
+    },
     update: {
-      cabangId: null // Fix: OWNER tidak terkait cabang manapun
+      cabangId: null, // Fix: OWNER tidak terkait cabang manapun
+      hasMultiCabangAccess: true // OWNER selalu punya akses ke semua cabang
     },
     create: {
-      email: 'ziqrishahab@gmail.com',
+      email: 'owner@toko.com',
       password: hashedPassword,
       name: 'Owner Toko',
       role: 'OWNER',
-      cabangId: null // OWNER bisa akses semua cabang
+      cabangId: null, // OWNER bisa akses semua cabang
+      hasMultiCabangAccess: true, // OWNER selalu punya akses ke semua cabang
+      tenantId: tenant.id
     }
   });
 
@@ -42,41 +74,65 @@ async function main() {
   const hashedPasswordKasir = await bcrypt.hash('kasir123', 10);
   
   const kasir = await prisma.user.upsert({
-    where: { email: 'kasir@toko.com' },
+    where: { 
+      tenantId_email: {
+        tenantId: tenant.id,
+        email: 'kasir@toko.com'
+      }
+    },
     update: {},
     create: {
       email: 'kasir@toko.com',
       password: hashedPasswordKasir,
       name: 'Kasir 1',
       role: 'KASIR',
-      cabangId: cabang.id
+      cabangId: cabang.id,
+      tenantId: tenant.id
     }
   });
 
   console.log('✅ Kasir created:', kasir.email);
 
-  // Buat Kategori
+  // Buat Kategori (with tenantId)
   const categories = await Promise.all([
     prisma.category.upsert({
-      where: { name: 'Seragam SD' },
+      where: { 
+        tenantId_name: {
+          tenantId: tenant.id,
+          name: 'Seragam SD'
+        }
+      },
       update: {},
       create: {
+        tenantId: tenant.id,
         name: 'Seragam SD',
         description: 'Seragam Sekolah Dasar'
       }
     }),
     prisma.category.upsert({
-      where: { name: 'Seragam SMP' },
+      where: { 
+        tenantId_name: {
+          tenantId: tenant.id,
+          name: 'Seragam SMP'
+        }
+      },
       update: {},
       create: {
+        tenantId: tenant.id,
         name: 'Seragam SMP',
         description: 'Seragam Sekolah Menengah Pertama'
       }
     }),
     prisma.category.upsert({
-      where: { name: 'Perlengkapan Sekolah' },
+      where: { 
+        tenantId_name: {
+          tenantId: tenant.id,
+          name: 'Perlengkapan Sekolah'
+        }
+      },
       update: {},
       create: {
+        tenantId: tenant.id,
         name: 'Perlengkapan Sekolah',
         description: 'Tas, Sepatu, Topi, dll'
       }
@@ -102,7 +158,7 @@ async function main() {
   console.log('');
   console.log('📋 Default Users:');
   console.log('Owner:');
-  console.log('  Email: ziqrishahab@gmail.com');
+  console.log('  Email: owner@toko.com');
   console.log('  Password: owner123');
   console.log('');
   console.log('Kasir:');

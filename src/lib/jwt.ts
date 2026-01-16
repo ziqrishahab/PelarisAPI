@@ -5,27 +5,30 @@ interface TokenPayload {
   email: string;
   role: string;
   cabangId: string | null;
+  tenantId?: string | null;
+  // Optional CSRF token for cookie-based auth
+  csrfToken?: string;
 }
 
 // Validate JWT_SECRET on module load
-if (!process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is required');
-}
+import config from '../config/index.js';
 
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const JWT_SECRET = config.jwt.secret;
+const JWT_EXPIRES_IN = config.jwt.expiresIn;
 
 export const generateToken = (
   userId: string,
   email: string,
   role: string,
-  cabangId: string | null = null
+  cabangId: string | null = null,
+  tenantId?: string | null,
+  csrfToken?: string
 ): string => {
   const options: SignOptions = {
     expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn']
   };
   return jwt.sign(
-    { userId, email, role, cabangId },
+    { userId, email, role, cabangId, tenantId, csrfToken },
     JWT_SECRET,
     options
   );

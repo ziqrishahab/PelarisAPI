@@ -13,7 +13,8 @@ initSentry();
 import logger, { logError, logSocket } from './lib/logger.js';
 
 // Import and initialize Redis
-import { initRedis, disconnectRedis } from './lib/redis.js';
+import { initRedis, disconnectRedis, isRedisAvailable, isRedisConfigured } from './lib/redis.js';
+import prisma from './lib/prisma.js';
 initRedis();
 
 // Import middleware
@@ -32,6 +33,7 @@ import stockTransfers from './routes/stock-transfers.js';
 import backup from './routes/backup.js';
 import stock from './routes/stock.js';
 import channels from './routes/channels.js';
+import tenants from './routes/tenants.js';
 
 // Import socket helper
 import { initSocket } from './lib/socket.js';
@@ -39,60 +41,54 @@ import { initSocket } from './lib/socket.js';
 // Import backup scheduler
 import { startBackupScheduler, stopBackupScheduler } from './lib/backup-scheduler.js';
 
+// Import config
+import config from './config/index.js';
+
 const app = new Hono();
-const PORT = parseInt(process.env.PORT || '5100');
-
-// CORS Configuration
-// Parse comma-separated origins from environment variable
-const envOrigins = process.env.CORS_ORIGINS 
-  ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
-  : [];
-
-// Fallback to default origins for development
-const defaultOrigins = [
-  'http://localhost:3100',
-  'http://localhost:4000',
-  'http://127.0.0.1:3100',
-  'http://127.0.0.1:4000',
-];
-
-const allowedOrigins = [
-  ...envOrigins,
-  ...(process.env.NODE_ENV === 'development' ? defaultOrigins : []),
-].filter(Boolean) as string[];
+const PORT = config.server.PORT;
+const allowedOrigins = config.cors.allowedOrigins;
 
 app.use('*', cors({
   origin: (origin) => {
     if (!origin) return origin;
     
-    // Allow Vercel preview deployments
-    if (origin.endsWith('.vercel.app')) return origin;
-    
-    // Allow default production domain (ziqrishahab.com)
-    if (origin.endsWith('.ziqrishahab.com') || origin === 'https://ziqrishahab.com') {
-      return origin;
-    }
-    
-    // Allow additional production domain from environment (if specified)
-    const productionDomain = process.env.PRODUCTION_DOMAIN;
-    if (productionDomain && productionDomain !== 'ziqrishahab.com') {
-      if (origin.endsWith(productionDomain) || origin === `https://${productionDomain}`) {
+  // Allow Vercel preview deployments
+  if (origin.endsWith('.vercel.app')) return origin;
+  
+  // Allow production domain from config
+  const productionDomain = config.cors.productionDomain;
+  if (productionDomain) {
+    try {
+      const originUrl = new URL(origin);
+      const originHost = originUrl.hostname;
+      
+      // Exact match for the domain itself
+      if (originHost === productionDomain || originHost === `www.${productionDomain}`) {
         return origin;
       }
+      
+      // Subdomain match: must end with .productionDomain (with dot prefix for safety)
+      // This prevents attacks like "profit-example.com" matching "example.com"
+      if (originHost.endsWith(`.${productionDomain}`)) {
+        return origin;
+      }
+    } catch {
+      // Invalid URL, fall through to rejection
     }
+  }
     
     // Allow configured origins
     if (allowedOrigins.includes(origin)) return origin;
     
     // Log rejected origins in development
-    if (process.env.NODE_ENV === 'development') {
+    if (config.env.IS_DEV) {
       logger.warn(`[CORS] Rejected origin: ${origin}`);
     }
     
     return null;
   },
   credentials: true,
-  allowHeaders: ['Content-Type', 'Authorization'],
+  allowHeaders: ['Content-Type', 'Authorization', 'x-csrf-token'],
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 }));
 
@@ -134,6 +130,47 @@ app.get('/health', (c) => {
   return c.json({ status: 'OK', timestamp: new Date() });
 });
 
+// Full health check (DB, Redis)
+app.get('/health/full', async (c) => {
+  const checks = {
+    api: 'ok',
+    database: 'unknown' as 'ok' | 'error' | 'unknown',
+    redis: 'unknown' as 'ok' | 'error' | 'not_configured' | 'unknown',
+    timestamp: new Date(),
+  };
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.database = 'ok';
+  } catch (error) {
+    checks.database = 'error';
+    logError(error, { context: 'Health check - database' });
+  }
+
+  // Redis is optional - only check if configured
+  const redisConfigured = await isRedisConfigured();
+  if (redisConfigured) {
+    try {
+      if (isRedisAvailable()) {
+        checks.redis = 'ok';
+      } else {
+        // Redis is configured but not available - this is an error
+        checks.redis = 'error';
+      }
+    } catch (error) {
+      checks.redis = 'error';
+      logError(error, { context: 'Health check - redis' });
+    }
+  } else {
+    // Redis is not configured - this is OK, not an error
+    checks.redis = 'not_configured';
+  }
+
+  // Only fail health check if database is down or Redis is configured but unavailable
+  const hasError = checks.database === 'error' || (checks.redis === 'error');
+  return c.json(checks, hasError ? 503 : 200);
+});
+
 // API Routes
 app.route('/api/auth', auth);
 app.route('/api/products', products);
@@ -146,9 +183,10 @@ app.route('/api/stock-transfers', stockTransfers);
 app.route('/api/backup', backup);
 app.route('/api/stock', stock);
 app.route('/api/channels', channels);
+app.route('/api/tenants', tenants);
 
 // Error handling
-app.onError((err, c) => {
+app.onError(async (err, c) => {
   logError(err, { path: c.req.path, method: c.req.method });
   
   // Send to Sentry with request context
@@ -158,7 +196,16 @@ app.onError((err, c) => {
     query: c.req.query(),
   });
   
-  return c.json({ error: err.message || 'Internal server error' }, 500);
+  // Use custom error handling
+  const { errorToJson } = await import('./lib/errors.js');
+  const errorResponse = errorToJson(err);
+  
+  // Don't expose internal errors in production
+  if (config.env.IS_PROD && errorResponse.statusCode === 500) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+  
+  return c.json(errorResponse, errorResponse.statusCode as any);
 });
 
 // 404 handler
@@ -255,7 +302,7 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
   logger.info('Server started', {
     port: PORT,
-    environment: process.env.NODE_ENV || 'development',
+    environment: config.env.NODE_ENV,
     timestamp: new Date().toISOString(),
   });
   

@@ -12,17 +12,23 @@ REST API untuk Pelaris.id - Omnichannel POS System.
 
 ## Features
 
+- **Multi-Tenant Architecture** - Complete tenant isolation (products, categories, users, cabangs)
+- **Multi-Cabang Access Control** - Configurable access for ADMIN/MANAGER (all cabangs or specific cabang)
 - Multi-cabang stock management
 - Real-time sync dengan Socket.io
 - Excel import/export produk (base64 encoded)
 - Stock alerts per variant
 - Split payment transactions
+- Returns & Exchanges management
+- Cash transaction tracking
 - Auto backup dengan scheduler (daily at 00:00 WIB)
 - Backup retention policy (7 days)
 - Database restore with transaction rollback
 - Winston logger untuk semua error handling
-- JWT authentication dengan RBAC
+- JWT authentication dengan RBAC (includes tenantId)
+- CSRF protection dengan token validation
 - Smart rate limiting (only counts failed login attempts)
+- Audit logging untuk critical actions
 
 ## Quick Start
 
@@ -43,6 +49,54 @@ npm run dev
 ```
 
 Server: http://localhost:5100
+
+Multi-Tenant Architecture
+--------------------------
+
+- **Tenant Model**: All data is scoped by `tenantId` (users, cabangs, products, categories, transactions, etc.)
+- **JWT Token**: Includes `tenantId` in payload for automatic tenant scoping
+- **Product & Category Isolation**: Products and categories are per-tenant (not global)
+- **User Management**: Only OWNER can create/manage users within their tenant
+- **Register Flow**: Public registration creates a new tenant automatically
+
+Multi-Cabang Access Control
+---------------------------
+
+- **OWNER**: Always has access to all cabangs (`hasMultiCabangAccess = true`, enforced)
+- **ADMIN/MANAGER**: Configurable by Owner:
+  - Single cabang: `hasMultiCabangAccess = false`, `cabangId` set
+  - All cabangs: `hasMultiCabangAccess = true`, `cabangId = null`
+- **KASIR**: Always tied to single cabang (`hasMultiCabangAccess = false`, enforced)
+- Only OWNER can set `hasMultiCabangAccess` via user management endpoints
+
+Database and migration notes
+----------------------------
+
+- The project uses Prisma for schema migrations. If you change `prisma/schema.prisma`, create a migration with:
+
+```bash
+npx prisma migrate dev --name <name>
+```
+
+- To reset the local database (this will destroy data):
+
+```bash
+npx prisma migrate reset --force
+npx prisma db seed
+```
+
+- If you encounter authentication errors with Prisma (P1000), verify `DATABASE_URL` in `.env` and ensure the PostgreSQL server is running and reachable. On local Windows installs the service is typically `postgresql-x64-18` and data files are under `C:\Program Files\PostgreSQL\18`.
+
+Start the server for production
+-----------------------------
+
+```bash
+# build
+npm run build
+
+# start
+npm start
+```
 
 ## Tech Stack
 
@@ -155,6 +209,20 @@ npx prisma studio
 ```
 
 ## Changelog
+
+### 2026-01-15
+**Multi-Tenant & Multi-Cabang Access:**
+- Implemented complete multi-tenant architecture with Tenant model
+- Added `hasMultiCabangAccess` field to User model for flexible access control
+- Products and Categories now tenant-scoped (per-tenant isolation)
+- JWT tokens now include `tenantId` for automatic scoping
+- All routes enforce tenant isolation (products, categories, users, cabangs)
+- Added CSRF protection with token validation
+- Fixed CORS subdomain validation logic
+- Added AuditLog model for tracking critical actions
+- Added ExchangeItem and CashTransaction models for returns/exchanges
+- Updated auth routes to support multi-cabang access configuration
+- Only OWNER can manage users and set multi-cabang access
 
 ### 2026-01-09
 - Complete console.log cleanup (59 instances replaced with Winston logger)

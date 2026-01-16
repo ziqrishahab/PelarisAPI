@@ -56,6 +56,22 @@ if (process.env.NODE_ENV === 'production') {
   logger.transports[0].silent = true;
 }
 
+// Basic masking to avoid logging full secrets
+const maskEmail = (email?: string) => {
+  if (!email) return email;
+  const [user, domain] = email.split('@');
+  if (!domain) return email;
+  const maskedUser = user.length <= 2 ? `${user[0]}*` : `${user[0]}***${user[user.length - 1]}`;
+  return `${maskedUser}@${domain}`;
+};
+
+const maskIp = (ip?: string) => {
+  if (!ip) return ip;
+  if (ip.includes(':')) return ip.split(':').slice(0, -1).join(':') + ':*';
+  const parts = ip.split('.');
+  return parts.length === 4 ? `${parts[0]}.${parts[1]}.*.*` : ip;
+};
+
 // Helper functions for common log patterns
 export const logRequest = (method: string, path: string, statusCode: number, duration: number, userId?: string) => {
   logger.info('HTTP Request', {
@@ -82,9 +98,9 @@ export const logError = (error: Error | unknown, context?: Record<string, any>) 
 export const logAuth = (action: string, userId: string, email: string, success: boolean, ip?: string) => {
   logger.info(`Auth: ${action}`, {
     userId,
-    email,
+    email: maskEmail(email),
     success,
-    ip,
+    ip: maskIp(ip),
   });
 };
 

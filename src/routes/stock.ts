@@ -4,6 +4,7 @@ import { authMiddleware, type AuthUser } from '../middleware/auth.js';
 import { emitStockUpdated } from '../lib/socket.js';
 import { logStock, logError } from '../lib/logger.js';
 import { validate, stockAdjustmentSchema } from '../lib/validators.js';
+import { createAuditLog } from '../lib/audit.js';
 
 type Variables = {
   user: AuthUser;
@@ -200,6 +201,30 @@ stock.post('/adjustment', authMiddleware, async (c) => {
     
     // Log stock adjustment
     logStock(type, variantId, cabangId, quantity, previousQty, userId);
+
+    // Audit log (non-blocking)
+    const ip =
+      c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
+      c.req.header('x-real-ip') ||
+      c.req.header('cf-connecting-ip') ||
+      undefined;
+
+    void createAuditLog({
+      action: 'STOCK_ADJUSTMENT',
+      entityType: 'StockAdjustment',
+      entityId: result.adjustment.id,
+      description: `${type === 'add' ? 'Tambah' : 'Kurang'} stok ${quantity} (${previousQty} → ${newQty})`,
+      metadata: {
+        variantId,
+        cabangId,
+        type,
+        quantity,
+        previousQty,
+        newQty,
+        reason,
+      },
+      context: { user, ip },
+    });
     
     return c.json({
       success: true,

@@ -1,13 +1,12 @@
 import { PrismaClient } from '@prisma/client';
 import logger from './logger.js';
-
-const isDev = process.env.NODE_ENV !== 'production';
+import config from '../config/index.js';
 
 const prisma = new PrismaClient({
-  log: isDev ? ['query', 'info', 'warn', 'error'] : ['error'],
+  log: config.env.IS_DEV ? ['query', 'info', 'warn', 'error'] : ['error'],
   datasources: {
     db: {
-      url: process.env.DATABASE_URL
+      url: config.database.url
     }
   }
 });
@@ -16,7 +15,7 @@ prisma.$on('error' as never, (e: any) => {
   logger.error('Prisma error:', e);
 });
 
-if (isDev) {
+if (config.env.IS_DEV) {
   prisma.$on('query' as never, (e: any) => {
     logger.debug(`Query: ${e.query}`, { duration: e.duration });
   });

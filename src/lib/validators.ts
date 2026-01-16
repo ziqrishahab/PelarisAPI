@@ -27,7 +27,7 @@ export const transactionItemSchema = z.object({
 
 const paymentMethods = ['CASH', 'DEBIT', 'TRANSFER', 'QRIS'] as const;
 const stockAdjustmentTypes = ['add', 'subtract'] as const;
-const returnReasons = ['DAMAGED', 'WRONG_ITEM', 'EXPIRED', 'CUSTOMER_REQUEST', 'OTHER'] as const;
+const returnReasons = ['CUSTOMER_REQUEST', 'OTHER', 'WRONG_SIZE', 'WRONG_ITEM', 'DEFECTIVE', 'EXPIRED'] as const;
 
 export const createTransactionSchema = z.object({
   customerName: z.string().optional(),
@@ -95,13 +95,23 @@ export const returnItemSchema = z.object({
   price: z.number().nonnegative('Price tidak boleh negatif'),
 });
 
+export const exchangeItemSchema = z.object({
+  productVariantId: z.string().min(1, 'Product variant ID wajib diisi'),
+  quantity: z.number().int().positive('Quantity harus lebih dari 0'),
+});
+
 export const createReturnSchema = z.object({
   transactionId: z.string().min(1, 'Transaction ID wajib diisi'),
   reason: z.enum(returnReasons),
+  reasonDetail: z.string().optional(),
   notes: z.string().optional(),
+  photoUrls: z.array(z.string()).optional(),
+  conditionNote: z.string().optional(),
   items: z.array(returnItemSchema).min(1, 'Minimal 1 item untuk return'),
   refundMethod: z.enum(paymentMethods).optional(),
   approvedBy: z.string().optional(),
+  managerOverride: z.boolean().optional(),
+  exchangeItems: z.array(exchangeItemSchema).optional(), // For WRONG_SIZE and WRONG_ITEM
 });
 
 // ==================== PRODUCT SCHEMAS ====================
@@ -156,6 +166,49 @@ export const createCategorySchema = z.object({
   description: z.string().optional(),
 });
 
+export const updateCategorySchema = z.object({
+  name: z.string().min(1, 'Nama kategori wajib diisi').optional(),
+  description: z.string().optional(),
+});
+
+// ==================== CABANG SCHEMAS ====================
+
+export const createCabangSchema = z.object({
+  name: z.string().min(1, 'Nama cabang wajib diisi'),
+  address: z.string().min(1, 'Alamat cabang wajib diisi'),
+  phone: z.string().optional(),
+});
+
+export const updateCabangSchema = z.object({
+  name: z.string().min(1, 'Nama cabang wajib diisi').optional(),
+  address: z.string().min(1, 'Alamat cabang wajib diisi').optional(),
+  phone: z.string().optional(),
+  isActive: z.boolean().optional(),
+});
+
+// ==================== SETTINGS SCHEMAS ====================
+
+export const updateAppSettingsSchema = z.object({
+  returnEnabled: z.boolean().optional(),
+  returnDeadlineDays: z.number().int().positive().optional(),
+  returnRequiresApproval: z.boolean().optional(),
+  exchangeEnabled: z.boolean().optional(),
+});
+
+export const updatePrinterSettingsSchema = z.object({
+  cabangId: z.string().min(1, 'Cabang ID wajib diisi'),
+  autoPrintEnabled: z.boolean().optional(),
+  printerName: z.string().optional(),
+  paperWidth: z.union([z.literal(58), z.literal(80)]).optional(),
+  branchName: z.string().optional(),
+  address: z.string().optional(),
+  phone: z.string().optional(),
+  footerText1: z.string().optional(),
+  footerText2: z.string().optional(),
+});
+
+export const updateSettingsSchema = z.record(z.string(), z.union([z.string(), z.number()]));
+
 // ==================== HELPER FUNCTIONS ====================
 
 export type ValidationResult<T> = 
@@ -187,3 +240,9 @@ export type CreateReturnInput = z.infer<typeof createReturnSchema>;
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type StockAlertInput = z.infer<typeof stockAlertSchema>;
 export type CreateCategoryInput = z.infer<typeof createCategorySchema>;
+export type UpdateCategoryInput = z.infer<typeof updateCategorySchema>;
+export type CreateCabangInput = z.infer<typeof createCabangSchema>;
+export type UpdateCabangInput = z.infer<typeof updateCabangSchema>;
+export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;
+export type UpdatePrinterSettingsInput = z.infer<typeof updatePrinterSettingsSchema>;
+export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;

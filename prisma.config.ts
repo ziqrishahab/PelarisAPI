@@ -1,5 +1,9 @@
-import "dotenv/config";
-import { defineConfig, env } from "prisma/config";
+import { defineConfig } from "prisma/config";
+
+// For build time (prisma generate), DATABASE_URL is not required
+// Prisma generate only needs the schema, not a database connection
+// Use a dummy URL for build time if DATABASE_URL is not set
+const datasourceUrl = process.env.DATABASE_URL || 'postgresql://dummy:dummy@localhost:5432/dummy';
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -8,6 +12,6 @@ export default defineConfig({
   },
   engine: "classic",
   datasource: {
-    url: env("DATABASE_URL"),
+    url: datasourceUrl,
   },
 });

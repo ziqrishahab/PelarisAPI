@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
+import { setCookie } from 'hono/cookie';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import prisma from '../lib/prisma.js';
 import { generateToken } from '../lib/jwt.js';
 import { authMiddleware, ownerOnly } from '../middleware/auth.js';
@@ -25,9 +27,14 @@ auth.post('/register', strictRateLimiter({ max: isDev ? 50 : 5 }), async (c) => 
 
     const { email, password, name, role, cabangId, storeName, branchName } = validation.data;
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email }
-    });
+    const authUser = c.get('user');
+    let tenantId: string | undefined = undefined;
+    if (authUser && authUser.tenantId) tenantId = authUser.tenantId;
+
+    // Check existing user scoped to tenant if tenantId present, otherwise global
+    const existingUser = tenantId
+      ? await prisma.user.findUnique({ where: { tenantId_email: { tenantId, email } } })
+      : await prisma.user.findFirst({ where: { email } });
 
     if (existingUser) {
       return c.json({ error: 'Email sudah terdaftar' }, 400);
@@ -40,11 +47,23 @@ auth.post('/register', strictRateLimiter({ max: isDev ? 50 : 5 }), async (c) => 
       // If no cabangId provided and storeName is provided, create default cabang
       let finalCabangId = cabangId;
       if (!finalCabangId && storeName) {
+        // If no tenantId yet (public register), create tenant first
+        if (!tenantId) {
+          const newTenant = await tx.tenant.create({
+            data: {
+              name: storeName || 'Toko',
+              slug: branchName?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'tenant',
+            }
+          });
+          tenantId = newTenant.id;
+        }
+
         const newCabang = await tx.cabang.create({
           data: {
             name: branchName || 'Pusat',
             address: null,
-            phone: null
+            phone: null,
+            tenantId: tenantId
           }
         });
         finalCabangId = newCabang.id;
@@ -65,7 +84,8 @@ auth.post('/register', strictRateLimiter({ max: isDev ? 50 : 5 }), async (c) => 
           password: hashedPassword,
           name,
           role: role || 'OWNER',
-          cabangId: finalCabangId || null
+          cabangId: finalCabangId || null,
+          tenantId: tenantId!
         },
         select: {
           id: true,
@@ -82,9 +102,21 @@ auth.post('/register', strictRateLimiter({ max: isDev ? 50 : 5 }), async (c) => 
     });
 
     const { user, finalCabangId } = result;
-    const token = generateToken(user.id, user.email, user.role, finalCabangId);
 
-    return c.json({ message: 'User berhasil dibuat', user, token, storeName }, 201);
+    // Generate CSRF token for cookie-based auth
+    const csrfToken = crypto.randomBytes(32).toString('hex');
+    const token = generateToken(user.id, user.email, user.role, finalCabangId, tenantId, csrfToken);
+
+    // Set HttpOnly cookie (best effort, frontend masih bisa pakai token di body)
+    setCookie(c, 'token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+    });
+
+    return c.json({ message: 'User berhasil dibuat', user, token, csrfToken, storeName }, 201);
   } catch (error) {
     logError(error, { context: 'Register' });
     return c.json({ error: 'Terjadi kesalahan server' }, 500);
@@ -104,7 +136,7 @@ auth.post('/login', loginRateLimiter({ max: isDev ? 100 : 10 }), async (c) => {
 
     const { email, password } = validation.data;
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: { email },
       include: {
         cabang: {
@@ -114,10 +146,8 @@ auth.post('/login', loginRateLimiter({ max: isDev ? 100 : 10 }), async (c) => {
     });
 
     // Get IP for rate limiting
-    const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() 
-      || c.req.header('x-real-ip') 
-      || c.req.header('cf-connecting-ip') 
-      || 'unknown';
+    const { getClientIP } = await import('../lib/utils.js');
+    const ip = getClientIP(c);
 
     if (!user) {
       // Increment failed login counter
@@ -142,11 +172,13 @@ auth.post('/login', loginRateLimiter({ max: isDev ? 100 : 10 }), async (c) => {
     // Login successful - reset rate limit counter
     await resetLoginRateLimit(ip);
 
-    const token = generateToken(user.id, user.email, user.role, user.cabangId);
+    // Generate CSRF token for cookie-based auth
+    const csrfToken = crypto.randomBytes(32).toString('hex');
+    const token = generateToken(user.id, user.email, user.role, user.cabangId, user.tenantId, csrfToken);
     const { password: _, ...userWithoutPassword } = user;
 
     // Get storeName from printer settings
-    let storeName = 'Pelaris.id'; // default
+    let storeName = 'Harapan Abah'; // default
     if (user.cabangId) {
       const printerSettings = await prisma.printerSettings.findUnique({
         where: { cabangId: user.cabangId },
@@ -160,7 +192,16 @@ auth.post('/login', loginRateLimiter({ max: isDev ? 100 : 10 }), async (c) => {
     // Log successful login
     logAuth('login', user.id, user.email, true, ip);
 
-    return c.json({ message: 'Login berhasil', user: { ...userWithoutPassword, storeName }, token });
+    // Set HttpOnly cookie (best effort)
+    setCookie(c, 'token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+    });
+
+    return c.json({ message: 'Login berhasil', user: { ...userWithoutPassword, storeName }, token, csrfToken });
   } catch (error) {
     logError(error, { context: 'Login' });
     return c.json({ error: 'Terjadi kesalahan server' }, 500);
@@ -179,6 +220,8 @@ auth.get('/me', authMiddleware, async (c) => {
         name: true,
         role: true,
         isActive: true,
+        cabangId: true,
+        hasMultiCabangAccess: true,
         cabang: {
           select: { id: true, name: true, address: true, phone: true }
         },
@@ -191,7 +234,7 @@ auth.get('/me', authMiddleware, async (c) => {
     }
 
     // Get storeName from printer settings (first cabang)
-    let storeName = 'Pelaris.id'; // default
+    let storeName = 'Harapan Abah'; // default
     if (user.cabang?.id) {
       const printerSettings = await prisma.printerSettings.findUnique({
         where: { cabangId: user.cabang.id },
@@ -211,12 +254,23 @@ auth.get('/me', authMiddleware, async (c) => {
 
 // Logout
 auth.post('/logout', authMiddleware, async (c) => {
+  // Clear HttpOnly cookie if present
+  setCookie(c, 'token', '', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: 0,
+  });
+
   return c.json({ message: 'Logout berhasil' });
 });
 
 // Get all users (Owner only)
 auth.get('/users', authMiddleware, ownerOnly, async (c) => {
   try {
+    // reuse authUser from earlier in this handler
+    const tid = c.get('user')?.tenantId;
     const users = await prisma.user.findMany({
       select: {
         id: true,
@@ -225,12 +279,14 @@ auth.get('/users', authMiddleware, ownerOnly, async (c) => {
         role: true,
         isActive: true,
         cabangId: true,
+        hasMultiCabangAccess: true,
         cabang: {
           select: { id: true, name: true }
         },
         createdAt: true,
         updatedAt: true
       },
+      where: tid ? { tenantId: tid } : undefined,
       orderBy: { createdAt: 'desc' }
     });
 
@@ -244,18 +300,35 @@ auth.get('/users', authMiddleware, ownerOnly, async (c) => {
 // Create user (Owner only)
 auth.post('/users', authMiddleware, ownerOnly, async (c) => {
   try {
-    const { email, password, name, role, cabangId } = await c.req.json();
+    const authUser = c.get('user');
+    const tenantId = authUser?.tenantId;
+
+    const { email, password, name, role, cabangId, hasMultiCabangAccess } = await c.req.json();
 
     if (!email || !password || !name || !role) {
       return c.json({ error: 'Email, password, name, dan role wajib diisi' }, 400);
     }
 
-    if (role !== 'ADMIN' && role !== 'OWNER' && !cabangId) {
-      return c.json({ error: 'cabangId wajib diisi untuk role KASIR/MANAGER' }, 400);
+    // Validation logic
+    if (role === 'KASIR') {
+      // KASIR must have cabangId, cannot have multi-cabang access
+      if (!cabangId) {
+        return c.json({ error: 'cabangId wajib diisi untuk role KASIR' }, 400);
+      }
+      if (hasMultiCabangAccess) {
+        return c.json({ error: 'KASIR tidak boleh memiliki akses multi-cabang' }, 400);
+      }
+    } else if (role === 'ADMIN' || role === 'MANAGER') {
+      // ADMIN/MANAGER can choose: tied to 1 cabang OR multi-cabang access
+      if (!hasMultiCabangAccess && !cabangId) {
+        return c.json({ error: 'Pilih cabang spesifik atau aktifkan akses multi-cabang' }, 400);
+      }
     }
+    // OWNER always has multi-cabang access (enforced below)
 
+    if (!tenantId) return c.json({ error: 'Missing tenant scope' }, 400);
     const existingUser = await prisma.user.findUnique({
-      where: { email }
+      where: { tenantId_email: { tenantId: tenantId, email } }
     });
 
     if (existingUser) {
@@ -270,7 +343,9 @@ auth.post('/users', authMiddleware, ownerOnly, async (c) => {
         password: hashedPassword,
         name,
         role,
-        cabangId
+        cabangId: hasMultiCabangAccess ? null : cabangId, // If multi-cabang, set cabangId to null
+        hasMultiCabangAccess: role === 'OWNER' ? true : (hasMultiCabangAccess || false), // OWNER always true
+        tenantId: tenantId!
       },
       select: {
         id: true,
@@ -278,6 +353,7 @@ auth.post('/users', authMiddleware, ownerOnly, async (c) => {
         name: true,
         role: true,
         isActive: true,
+        hasMultiCabangAccess: true,
         cabang: {
           select: { id: true, name: true }
         },
@@ -296,7 +372,7 @@ auth.post('/users', authMiddleware, ownerOnly, async (c) => {
 auth.put('/users/:id', authMiddleware, ownerOnly, async (c) => {
   try {
     const id = c.req.param('id');
-    const { name, role, cabangId, password, isActive } = await c.req.json();
+    const { name, role, cabangId, password, isActive, hasMultiCabangAccess } = await c.req.json();
 
     if (!name || !role) {
       return c.json({ error: 'Nama dan role wajib diisi' }, 400);
@@ -316,14 +392,33 @@ auth.put('/users/:id', authMiddleware, ownerOnly, async (c) => {
       isActive: isActive !== undefined ? isActive : existingUser.isActive
     };
 
+    // Multi-cabang access logic
+    if (hasMultiCabangAccess !== undefined) {
+      // Validation
+      if (role === 'KASIR' && hasMultiCabangAccess) {
+        return c.json({ error: 'KASIR tidak boleh memiliki akses multi-cabang' }, 400);
+      }
+      
+      updateData.hasMultiCabangAccess = role === 'OWNER' ? true : hasMultiCabangAccess;
+      
+      // If multi-cabang access enabled, clear cabangId
+      if (hasMultiCabangAccess) {
+        updateData.cabangId = null;
+      }
+    }
+
     // Only update cabangId if explicitly provided in request
-    if (cabangId !== undefined) {
-      // Convert empty string to null for OWNER/ADMIN
+    if (cabangId !== undefined && !updateData.hasMultiCabangAccess) {
       const normalizedCabangId = cabangId === '' ? null : cabangId;
       
-      // Validate: non-OWNER/ADMIN must have cabangId
-      if (role !== 'OWNER' && role !== 'ADMIN' && !normalizedCabangId) {
-        return c.json({ error: 'cabangId wajib diisi untuk role KASIR/MANAGER' }, 400);
+      // Validate: KASIR must have cabangId
+      if (role === 'KASIR' && !normalizedCabangId) {
+        return c.json({ error: 'cabangId wajib diisi untuk role KASIR' }, 400);
+      }
+      
+      // Validate: ADMIN/MANAGER must choose between cabangId or multi-cabang
+      if ((role === 'ADMIN' || role === 'MANAGER') && !normalizedCabangId && !hasMultiCabangAccess) {
+        return c.json({ error: 'Pilih cabang spesifik atau aktifkan akses multi-cabang' }, 400);
       }
       
       updateData.cabangId = normalizedCabangId;
@@ -335,13 +430,14 @@ auth.put('/users/:id', authMiddleware, ownerOnly, async (c) => {
 
     const user = await prisma.user.update({
       where: { id },
-      data: updateData,
+      data: { ...updateData },
       select: {
         id: true,
         email: true,
         name: true,
         role: true,
         isActive: true,
+        hasMultiCabangAccess: true,
         cabang: {
           select: { id: true, name: true }
         },

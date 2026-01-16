@@ -27,39 +27,78 @@ const backup = new Hono<{ Variables: Variables }>();
 // Manual Database Backup (JSON format - cross-platform compatible)
 backup.post('/database', authMiddleware, ownerOnly, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     await ensureBackupDir();
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `backup-${timestamp}.json`;
     const filepath = path.join(BACKUP_DIR, filename);
     
-    // Export all data from all tables using Prisma
-    logger.info('[Backup] Starting database backup...');
+    // Export all data from all tables using Prisma - tenant-scoped
+    logger.info(`[Backup] Starting database backup for tenant ${tenantId}...`);
     
     const backupData = {
       metadata: {
         timestamp: new Date().toISOString(),
-        version: '1.0'
+        version: '1.0',
+        tenantId
       },
       data: {
-        users: await prisma.user.findMany(),
-        categories: await prisma.category.findMany(),
-        products: await prisma.product.findMany(),
-        productVariants: await prisma.productVariant.findMany(),
-        variantTypes: await prisma.variantType.findMany(),
-        variantOptions: await prisma.variantOption.findMany(),
-        cabangs: await prisma.cabang.findMany(),
-        stocks: await prisma.stock.findMany(),
-        stockAdjustments: await prisma.stockAdjustment.findMany(),
-        transactions: await prisma.transaction.findMany(),
-        transactionItems: await prisma.transactionItem.findMany(),
-        priceDiscrepancies: await prisma.priceDiscrepancy.findMany(),
-        stockTransfers: await prisma.stockTransfer.findMany(),
-        returns: await prisma.return.findMany(),
-        returnItems: await prisma.returnItem.findMany(),
-        orders: await prisma.order.findMany(),
-        settings: await prisma.settings.findMany(),
-        printerSettings: await prisma.printerSettings.findMany()
+        users: await prisma.user.findMany({ where: { tenantId } }),
+        categories: await prisma.category.findMany({ where: { tenantId } }),
+        products: await prisma.product.findMany({ where: { tenantId } }),
+        productVariants: await prisma.productVariant.findMany({
+          where: { product: { tenantId } }
+        }),
+        variantTypes: await prisma.variantType.findMany({
+          where: { product: { tenantId } }
+        }),
+        variantOptions: await prisma.variantOption.findMany({
+          where: { variantType: { product: { tenantId } } }
+        }),
+        cabangs: await prisma.cabang.findMany({ where: { tenantId } }),
+        stocks: await prisma.stock.findMany({
+          where: { cabang: { tenantId } }
+        }),
+        stockAdjustments: await prisma.stockAdjustment.findMany({
+          where: { cabang: { tenantId } }
+        }),
+        transactions: await prisma.transaction.findMany({
+          where: { cabang: { tenantId } }
+        }),
+        transactionItems: await prisma.transactionItem.findMany({
+          where: { transaction: { cabang: { tenantId } } }
+        }),
+        priceDiscrepancies: await prisma.priceDiscrepancy.findMany({
+          where: { transaction: { cabang: { tenantId } } }
+        }),
+        stockTransfers: await prisma.stockTransfer.findMany({
+          where: {
+            OR: [
+              { fromCabang: { tenantId } },
+              { toCabang: { tenantId } }
+            ]
+          }
+        }),
+        returns: await prisma.return.findMany({
+          where: { cabang: { tenantId } }
+        }),
+        returnItems: await prisma.returnItem.findMany({
+          where: { return: { cabang: { tenantId } } }
+        }),
+        orders: await prisma.order.findMany({
+          where: { cabang: { tenantId } }
+        }),
+        settings: await prisma.settings.findMany({ where: { tenantId } }),
+        printerSettings: await prisma.printerSettings.findMany({
+          where: { cabang: { tenantId } }
+        })
       }
     };
     
@@ -69,9 +108,9 @@ backup.post('/database', authMiddleware, ownerOnly, async (c) => {
     // Get file stats
     const stats = await fs.stat(filepath);
     
-    // Save backup record to database
+    // Save backup record to database - tenant-scoped
     await prisma.settings.upsert({
-      where: { key: 'last_backup' },
+      where: { tenantId_key: { tenantId, key: 'last_backup' } },
       update: { 
         value: JSON.stringify({
           timestamp: new Date().toISOString(),
@@ -81,6 +120,7 @@ backup.post('/database', authMiddleware, ownerOnly, async (c) => {
         })
       },
       create: { 
+        tenantId,
         key: 'last_backup',
         value: JSON.stringify({
           timestamp: new Date().toISOString(),
@@ -108,8 +148,15 @@ backup.post('/database', authMiddleware, ownerOnly, async (c) => {
 // Get Auto Backup Status
 backup.get('/auto-status', authMiddleware, ownerOnly, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const setting = await prisma.settings.findUnique({
-      where: { key: 'auto_backup_enabled' }
+      where: { tenantId_key: { tenantId, key: 'auto_backup_enabled' } }
     });
     
     const enabled = setting ? JSON.parse(setting.value) : false;
@@ -122,13 +169,20 @@ backup.get('/auto-status', authMiddleware, ownerOnly, async (c) => {
 // Toggle Auto Backup
 backup.post('/auto-backup', authMiddleware, ownerOnly, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const body = await c.req.json();
     const { enabled } = body as { enabled: boolean };
     
     await prisma.settings.upsert({
-      where: { key: 'auto_backup_enabled' },
+      where: { tenantId_key: { tenantId, key: 'auto_backup_enabled' } },
       update: { value: JSON.stringify(enabled) },
-      create: { key: 'auto_backup_enabled', value: JSON.stringify(enabled) }
+      create: { tenantId, key: 'auto_backup_enabled', value: JSON.stringify(enabled) }
     });
     
     return c.json({ success: true, enabled });
@@ -140,8 +194,15 @@ backup.post('/auto-backup', authMiddleware, ownerOnly, async (c) => {
 // Get Last Backup Info
 backup.get('/last-backup', authMiddleware, ownerOnly, async (c) => {
   try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
     const setting = await prisma.settings.findUnique({
-      where: { key: 'last_backup' }
+      where: { tenantId_key: { tenantId, key: 'last_backup' } }
     });
     
     if (!setting) {
@@ -423,9 +484,17 @@ backup.get('/export/report', authMiddleware, ownerOnly, async (c) => {
 // Reset Settings to Default
 backup.post('/reset-settings', authMiddleware, ownerOnly, async (c) => {
   try {
-    // Delete all custom settings except critical ones
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: 'Tenant scope required' }, 400);
+    }
+
+    // Delete all custom settings except critical ones - tenant-scoped
     await prisma.settings.deleteMany({
       where: {
+        tenantId,
         key: {
           notIn: ['last_backup', 'auto_backup_enabled']
         }

@@ -77,17 +77,64 @@ model ChannelStock {
   @@map("channel_stocks")
 }
 
+
+// ==================== MULTI-TENANT ====================
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String   // Business name
+  slug      String   @unique // URL-friendly identifier
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users      User[]
+  cabangs    Cabang[]
+  categories Category[]
+  products   Product[]
+  settings   Settings[]
+  
+  @@map("tenants")
+}
+
+// Audit Log for critical actions
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  cabangId    String?
+  userId      String?
+  action      String   // e.g. "STOCK_ADJUSTMENT", "RETURN_APPROVED"
+  entityType  String   // e.g. "Stock", "Return", "User"
+  entityId    String   // e.g. stockAdjustmentId, returnId, userId
+  description String?  // Human readable description
+  metadata    Json?    // Extra data snapshot
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([cabangId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
 // ==================== USER MANAGEMENT ====================
 
 // User Management
 model User {
   id        String   @id @default(cuid())
+  // Tenant relation
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId  String
+  
   email     String   @unique
   password  String
   name      String
   role      UserRole @default(KASIR)
   cabang    Cabang?  @relation(fields: [cabangId], references: [id])
   cabangId  String?
+  
+  // Multi-cabang access (ADMIN/MANAGER can access all cabangs if true)
+  hasMultiCabangAccess Boolean @default(false)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -98,7 +145,9 @@ model User {
   processedOrders    Order[]          @relation("ProcessedOrders")
   stockTransfers     StockTransfer[]
   stockAdjustments   StockAdjustment[]
+  recordedCashTransactions CashTransaction[]
 
+  @@unique([tenantId, email])
   @@map("users")
 }
 
@@ -120,6 +169,7 @@ model Return {
   processedBy     User         @relation(fields: [processedById], references: [id])
   processedById   String
   reason          ReturnReason
+  reasonDetail    String?      // Additional details about the reason
   notes           String?
   subtotal        Float // Total nilai return
   refundMethod    PaymentMethod
@@ -127,12 +177,37 @@ model Return {
   status          ReturnStatus @default(PENDING)
   approvedBy      String? // Manager yang approve
   approvedAt      DateTime?
+  returnType      String?      // 'EXCHANGE' or 'REFUND'
+  priceDifference Float?       // For exchanges: difference between old and new items
+  isOverdue       Boolean      @default(false)
+  managerOverride Boolean      @default(false)
+  photoUrls       String[]     @default([])
+  conditionNote   String?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
-  items ReturnItem[]
+  items            ReturnItem[]
+  exchangeItems    ExchangeItem[]
+  cashTransactions CashTransaction[]
 
   @@map("returns")
+}
+
+// Exchange items (items customer wants in exchange)
+model ExchangeItem {
+  id               String         @id @default(cuid())
+  return           Return         @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  returnId         String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+  productName      String // Snapshot
+  variantInfo      String // Snapshot
+  quantity         Int
+  price            Float
+  subtotal         Float
+  createdAt        DateTime       @default(now())
+
+  @@map("exchange_items")
 }
 
 enum ReturnReason {
@@ -170,7 +245,10 @@ model ReturnItem {
 // Cabang/Branch
 model Cabang {
   id        String   @id @default(cuid())
-  name      String   @unique
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId  String
+  
+  name        String
   address   String?
   phone     String?
   isActive  Boolean  @default(true)
@@ -181,6 +259,7 @@ model Cabang {
   stocks             Stock[]
   transactions       Transaction[]
   returns            Return[]
+  cashTransactions   CashTransaction[]
   printerSettings    PrinterSettings?
   requestedOrders    Order[]
   transfersFrom      StockTransfer[]  @relation("TransfersFrom")
@@ -188,24 +267,30 @@ model Cabang {
   stockAdjustments   StockAdjustment[]
   stockAlerts        StockAlert[]
 
+  @@unique([tenantId, name])
   @@map("cabang")
 }
 
 // Kategori Produk (Seragam, Perlengkapan, dll)
 model Category {
   id          String    @id @default(cuid())
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
   name        String    @unique
   description String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   products    Product[]
 
+  @@unique([tenantId, name])
   @@map("categories")
 }
 
 // Produk (Baju Seragam SD, Celana, dll)
 model Product {
   id          String      @id @default(cuid())
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
   name        String
   description String?
   category    Category    @relation(fields: [categoryId], references: [id])
@@ -218,6 +303,9 @@ model Product {
   variants     ProductVariant[]
   variantTypes VariantType[]
 
+  @@index([tenantId])
+  @@index([categoryId])
+  @@index([tenantId, isActive])
   @@map("products")
 }
 
@@ -276,6 +364,7 @@ model ProductVariant {
   channelStocks      ChannelStock[]
   transactionItems   TransactionItem[]
   returnItems        ReturnItem[]
+  exchangeItems      ExchangeItem[]
   priceDiscrepancies PriceDiscrepancy[]
   orders             Order[]
   stockTransfers     StockTransfer[]
@@ -394,10 +483,14 @@ model Transaction {
   items              TransactionItem[]
   priceDiscrepancies PriceDiscrepancy[]
   returns            Return[]
+  cashTransactions   CashTransaction[]
 
   @@index([channelId])
   @@index([status])
   @@index([externalOrderId])
+  @@index([cabangId, createdAt])
+  @@index([kasirId, createdAt])
+  @@index([channelId, status])
   @@map("transactions")
 }
 
@@ -412,6 +505,38 @@ enum PaymentStatus {
   PENDING
   COMPLETED
   CANCELLED
+}
+
+enum CashType {
+  SALE
+  RETURN
+  EXPENSE
+  DEPOSIT
+  WITHDRAW
+  OTHER
+}
+
+// Cash Transaction for tracking money in/out
+model CashTransaction {
+  id            String     @id @default(cuid())
+  type          CashType
+  amount        Float
+  description   String?
+  cabang        Cabang     @relation(fields: [cabangId], references: [id])
+  cabangId      String
+  return        Return?    @relation(fields: [returnId], references: [id])
+  returnId      String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  transactionId String?
+  recordedBy    User       @relation(fields: [recordedById], references: [id])
+  recordedById  String
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([cabangId, createdAt])
+  @@index([returnId])
+  @@index([transactionId])
+  @@map("cash_transactions")
 }
 
 // Item per Transaksi
@@ -452,14 +577,18 @@ model PriceDiscrepancy {
   @@map("price_discrepancies")
 }
 
-// Global Settings
+// Global Settings (Tenant-scoped)
 model Settings {
   id        String   @id @default(cuid())
-  key       String   @unique
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId  String
+  key       String
   value     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([tenantId, key])
+  @@index([tenantId])
   @@map("settings")
 }
 

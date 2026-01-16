@@ -6,6 +6,7 @@ let isConnected = false;
 
 // Initialize Redis connection
 export function initRedis(): void {
+  // Use process.env directly to avoid circular dependency on startup
   const redisUrl = process.env.REDIS_URL;
   
   // Skip if no Redis URL configured
@@ -56,6 +57,11 @@ export function initRedis(): void {
 // Get Redis client (null if not connected)
 export function getRedis(): Redis | null {
   return isConnected ? redis : null;
+}
+
+// Check if Redis is configured (REDIS_URL is set)
+export function isRedisConfigured(): boolean {
+  return !!process.env.REDIS_URL;
 }
 
 // Check if Redis is available
