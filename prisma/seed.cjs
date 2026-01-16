@@ -5,27 +5,23 @@ const prisma = new PrismaClient();
 
 async function main() {
   console.log('🌱 Seeding database...');
+  console.log('');
 
-  // Buat Tenant dulu
+  // ============ TENANT ============
   const tenant = await prisma.tenant.upsert({
-    where: { subdomain: 'harapan-abah' },
+    where: { slug: 'demo-store' },
     update: {},
     create: {
-      subdomain: 'harapan-abah',
-      storeName: 'Harapan Abah',
-      email: 'harapanabah@gmail.com',
-      phone: '081234567890',
-      address: 'Jl. Contoh No. 123',
-      maxUsers: 10,
-      maxProducts: 1000,
-      maxCabang: 5
+      name: 'Demo Store',
+      slug: 'demo-store',
+      isActive: true
     }
   });
 
-  console.log('✅ Tenant created:', tenant.storeName);
+  console.log('✅ Tenant created:', tenant.name);
 
-  // Buat Cabang (dengan tenantId)
-  const cabang = await prisma.cabang.upsert({
+  // ============ CABANG ============
+  const cabangPusat = await prisma.cabang.upsert({
     where: { 
       tenantId_name: {
         tenantId: tenant.id,
@@ -35,135 +31,193 @@ async function main() {
     update: {},
     create: {
       name: 'Cabang Pusat',
-      address: 'Jl. Contoh No. 123',
+      address: 'Jl. Utama No. 1',
       phone: '081234567890',
       tenantId: tenant.id
     }
   });
 
-  console.log('✅ Cabang created:', cabang.name);
+  console.log('✅ Cabang created:', cabangPusat.name);
 
-  // Buat User Owner (tanpa cabang - bisa akses semua cabang)
-  const hashedPassword = await bcrypt.hash('owner123', 10);
+  // ============ USERS ============
+  const hashedOwnerPassword = await bcrypt.hash('owner123', 10);
+  const hashedKasirPassword = await bcrypt.hash('kasir123', 10);
   
+  // Owner - akses semua cabang
   const owner = await prisma.user.upsert({
-    where: { 
-      tenantId_email: {
-        tenantId: tenant.id,
-        email: 'owner@toko.com'
-      }
-    },
+    where: { email: 'owner@demo.com' },
     update: {
-      cabangId: null, // Fix: OWNER tidak terkait cabang manapun
-      hasMultiCabangAccess: true // OWNER selalu punya akses ke semua cabang
+      password: hashedOwnerPassword,
+      cabangId: null,
+      hasMultiCabangAccess: true,
+      tenantId: tenant.id
     },
     create: {
-      email: 'owner@toko.com',
-      password: hashedPassword,
-      name: 'Owner Toko',
+      email: 'owner@demo.com',
+      password: hashedOwnerPassword,
+      name: 'Owner Demo',
       role: 'OWNER',
-      cabangId: null, // OWNER bisa akses semua cabang
-      hasMultiCabangAccess: true, // OWNER selalu punya akses ke semua cabang
+      cabangId: null,
+      hasMultiCabangAccess: true,
       tenantId: tenant.id
     }
   });
 
   console.log('✅ Owner created:', owner.email);
 
-  // Buat User Kasir
-  const hashedPasswordKasir = await bcrypt.hash('kasir123', 10);
-  
+  // Kasir - hanya 1 cabang
   const kasir = await prisma.user.upsert({
-    where: { 
-      tenantId_email: {
-        tenantId: tenant.id,
-        email: 'kasir@toko.com'
-      }
+    where: { email: 'kasir@demo.com' },
+    update: {
+      password: hashedKasirPassword,
+      tenantId: tenant.id
     },
-    update: {},
     create: {
-      email: 'kasir@toko.com',
-      password: hashedPasswordKasir,
-      name: 'Kasir 1',
+      email: 'kasir@demo.com',
+      password: hashedKasirPassword,
+      name: 'Kasir Demo',
       role: 'KASIR',
-      cabangId: cabang.id,
+      cabangId: cabangPusat.id,
+      hasMultiCabangAccess: false,
       tenantId: tenant.id
     }
   });
 
   console.log('✅ Kasir created:', kasir.email);
 
-  // Buat Kategori (with tenantId)
-  const categories = await Promise.all([
-    prisma.category.upsert({
-      where: { 
-        tenantId_name: {
+  // ============ CATEGORIES ============
+  // Generic categories untuk berbagai jenis usaha
+  const categoryData = [
+    { name: 'Makanan', description: 'Produk makanan dan snack' },
+    { name: 'Minuman', description: 'Produk minuman' },
+    { name: 'Pakaian', description: 'Produk fashion dan pakaian' },
+    { name: 'Elektronik', description: 'Produk elektronik dan gadget' },
+    { name: 'Lainnya', description: 'Produk lainnya' }
+  ];
+
+  const categories = await Promise.all(
+    categoryData.map(cat => 
+      prisma.category.upsert({
+        where: { 
+          tenantId_name: {
+            tenantId: tenant.id,
+            name: cat.name
+          }
+        },
+        update: {},
+        create: {
           tenantId: tenant.id,
-          name: 'Seragam SD'
+          name: cat.name,
+          description: cat.description
         }
-      },
-      update: {},
-      create: {
-        tenantId: tenant.id,
-        name: 'Seragam SD',
-        description: 'Seragam Sekolah Dasar'
-      }
-    }),
-    prisma.category.upsert({
-      where: { 
-        tenantId_name: {
-          tenantId: tenant.id,
-          name: 'Seragam SMP'
-        }
-      },
-      update: {},
-      create: {
-        tenantId: tenant.id,
-        name: 'Seragam SMP',
-        description: 'Seragam Sekolah Menengah Pertama'
-      }
-    }),
-    prisma.category.upsert({
-      where: { 
-        tenantId_name: {
-          tenantId: tenant.id,
-          name: 'Perlengkapan Sekolah'
-        }
-      },
-      update: {},
-      create: {
-        tenantId: tenant.id,
-        name: 'Perlengkapan Sekolah',
-        description: 'Tas, Sepatu, Topi, dll'
-      }
-    })
-  ]);
+      })
+    )
+  );
 
   console.log('✅ Categories created:', categories.length);
 
-  // Buat Default Settings
-  await prisma.settings.upsert({
-    where: { key: 'minStock' },
+  // ============ CHANNELS ============
+  const channelData = [
+    { name: 'POS', description: 'Point of Sale - penjualan langsung di toko' },
+    { name: 'Online', description: 'Penjualan online via website/app' },
+    { name: 'WhatsApp', description: 'Penjualan via WhatsApp' },
+    { name: 'Marketplace', description: 'Penjualan via marketplace (Tokopedia, Shopee, dll)' }
+  ];
+
+  const channels = await Promise.all(
+    channelData.map(ch =>
+      prisma.channel.upsert({
+        where: { name: ch.name },
+        update: {},
+        create: {
+          name: ch.name,
+          description: ch.description
+        }
+      })
+    )
+  );
+
+  console.log('✅ Channels created:', channels.length);
+
+  // ============ SETTINGS ============
+  const settingsData = [
+    // Return/Exchange settings
+    { key: 'returnEnabled', value: 'true' },
+    { key: 'returnDeadlineDays', value: '7' },
+    { key: 'returnRequiresApproval', value: 'true' },
+    { key: 'exchangeEnabled', value: 'true' },
+    // General settings
+    { key: 'currency', value: 'IDR' },
+    { key: 'taxRate', value: '0' },
+    { key: 'receiptFooter', value: 'Terima kasih telah berbelanja!' }
+  ];
+
+  await Promise.all(
+    settingsData.map(setting =>
+      prisma.settings.upsert({
+        where: { 
+          tenantId_key: { 
+            tenantId: tenant.id, 
+            key: setting.key 
+          } 
+        },
+        update: { value: setting.value },
+        create: { 
+          tenantId: tenant.id,
+          key: setting.key, 
+          value: setting.value 
+        }
+      })
+    )
+  );
+
+  console.log('✅ Settings created:', settingsData.length);
+
+  // ============ PRINTER SETTINGS ============
+  await prisma.printerSettings.upsert({
+    where: { cabangId: cabangPusat.id },
     update: {},
     create: {
-      key: 'minStock',
-      value: '5'
+      cabangId: cabangPusat.id,
+      storeName: 'Demo Store',
+      storeAddress: 'Jl. Utama No. 1',
+      storePhone: '081234567890',
+      footerText: 'Terima kasih telah berbelanja!',
+      showLogo: true,
+      paperWidth: 58
     }
   });
 
-  console.log('✅ Default settings created: minStock = 5');
+  console.log('✅ Printer settings created');
 
+  // ============ SUMMARY ============
   console.log('');
-  console.log('🎉 Seeding completed!');
+  console.log('═══════════════════════════════════════════');
+  console.log('🎉 Seeding completed successfully!');
+  console.log('═══════════════════════════════════════════');
   console.log('');
-  console.log('📋 Default Users:');
-  console.log('Owner:');
-  console.log('  Email: owner@toko.com');
-  console.log('  Password: owner123');
+  console.log('📋 Demo Accounts:');
+  console.log('┌─────────────────────────────────────────┐');
+  console.log('│ OWNER                                   │');
+  console.log('│   Email    : owner@demo.com             │');
+  console.log('│   Password : owner123                   │');
+  console.log('│   Access   : All branches               │');
+  console.log('├─────────────────────────────────────────┤');
+  console.log('│ KASIR                                   │');
+  console.log('│   Email    : kasir@demo.com             │');
+  console.log('│   Password : kasir123                   │');
+  console.log('│   Access   : Cabang Pusat only          │');
+  console.log('└─────────────────────────────────────────┘');
   console.log('');
-  console.log('Kasir:');
-  console.log('  Email: kasir@toko.com');
-  console.log('  Password: kasir123');
+  console.log('📦 Data Created:');
+  console.log('   • 1 Tenant (Demo Store)');
+  console.log('   • 1 Cabang (Cabang Pusat)');
+  console.log('   • 2 Users (Owner + Kasir)');
+  console.log(`   • ${categories.length} Categories`);
+  console.log(`   • ${channels.length} Sales Channels`);
+  console.log(`   • ${settingsData.length} App Settings`);
+  console.log('   • 1 Printer Settings');
+  console.log('');
 }
 
 main()
