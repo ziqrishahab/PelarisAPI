@@ -186,6 +186,81 @@ export const updateCabangSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+// ==================== CHANNEL SCHEMAS ====================
+
+export const createChannelSchema = z.object({
+  code: z.string().min(1, 'Kode channel wajib diisi').max(20),
+  name: z.string().min(1, 'Nama channel wajib diisi').max(100),
+  type: z.enum(['POS', 'MARKETPLACE', 'WEBSTORE', 'SOCIAL', 'OTHER']).optional(),
+  icon: z.string().optional(),
+  color: z.string().optional(),
+  apiConfig: z.record(z.any()).nullable().optional(),
+  fieldMapping: z.record(z.any()).nullable().optional(),
+});
+
+export const updateChannelSchema = z.object({
+  name: z.string().min(1, 'Nama channel wajib diisi').max(100).optional(),
+  type: z.enum(['POS', 'MARKETPLACE', 'WEBSTORE', 'SOCIAL', 'OTHER']).optional(),
+  icon: z.string().optional(),
+  color: z.string().optional(),
+  isActive: z.boolean().optional(),
+  apiConfig: z.record(z.any()).nullable().optional(),
+  fieldMapping: z.record(z.any()).nullable().optional(),
+});
+
+export const channelStockAllocationSchema = z.object({
+  variantId: z.string().min(1, 'Variant ID wajib diisi'),
+  allocatedQty: z.number().int().nonnegative('Alokasi tidak boleh negatif'),
+});
+
+// ==================== USER SCHEMAS ====================
+
+export const createUserSchema = z.object({
+  email: z.string().email('Format email tidak valid'),
+  password: z.string().min(6, 'Password minimal 6 karakter'),
+  name: z.string().min(1, 'Nama wajib diisi'),
+  role: z.enum(['OWNER', 'MANAGER', 'ADMIN', 'KASIR']),
+  cabangId: z.string().optional(),
+  hasMultiCabangAccess: z.boolean().optional(),
+});
+
+export const updateUserSchema = z.object({
+  name: z.string().min(1, 'Nama wajib diisi'),
+  role: z.enum(['OWNER', 'MANAGER', 'ADMIN', 'KASIR']),
+  cabangId: z.string().optional(),
+  password: z.string().min(6).optional(),
+  isActive: z.boolean().optional(),
+  hasMultiCabangAccess: z.boolean().optional(),
+});
+
+// ==================== TENANT SCHEMAS ====================
+
+export const createTenantSchema = z.object({
+  name: z.string().min(1, 'Nama tenant wajib diisi').max(100),
+  slug: z.string().min(1, 'Slug wajib diisi').max(50).regex(/^[a-z0-9-]+$/, 'Slug hanya boleh huruf kecil, angka, dan strip'),
+});
+
+// ==================== RETURN APPROVAL SCHEMAS ====================
+
+export const approveReturnSchema = z.object({
+  approvedBy: z.string().min(1, 'Nama approver wajib diisi'),
+});
+
+export const rejectReturnSchema = z.object({
+  rejectedBy: z.string().min(1, 'Nama yang menolak wajib diisi'),
+  rejectionNotes: z.string().optional(),
+});
+
+// ==================== BACKUP SCHEMAS ====================
+
+export const restoreBackupSchema = z.object({
+  filename: z.string().min(1, 'Nama file wajib diisi'),
+});
+
+export const toggleAutoBackupSchema = z.object({
+  enabled: z.boolean(),
+});
+
 // ==================== SETTINGS SCHEMAS ====================
 
 export const updateAppSettingsSchema = z.object({
@@ -246,3 +321,13 @@ export type UpdateCabangInput = z.infer<typeof updateCabangSchema>;
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;
 export type UpdatePrinterSettingsInput = z.infer<typeof updatePrinterSettingsSchema>;
 export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;
+export type CreateChannelInput = z.infer<typeof createChannelSchema>;
+export type UpdateChannelInput = z.infer<typeof updateChannelSchema>;
+export type ChannelStockAllocationInput = z.infer<typeof channelStockAllocationSchema>;
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+export type CreateTenantInput = z.infer<typeof createTenantSchema>;
+export type ApproveReturnInput = z.infer<typeof approveReturnSchema>;
+export type RejectReturnInput = z.infer<typeof rejectReturnSchema>;
+export type RestoreBackupInput = z.infer<typeof restoreBackupSchema>;
+export type ToggleAutoBackupInput = z.infer<typeof toggleAutoBackupSchema>;

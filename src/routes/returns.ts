@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, type AuthUser } from '../middleware/auth.js';
+import { rateLimiter } from '../middleware/rate-limit.js';
 import logger, { logError } from '../lib/logger.js';
-import { validate, createReturnSchema } from '../lib/validators.js';
+import { validate, createReturnSchema, approveReturnSchema, rejectReturnSchema } from '../lib/validators.js';
 import { createAuditLog } from '../lib/audit.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 type Variables = {
   user: AuthUser;
@@ -106,7 +108,7 @@ returns.get('/stats', authMiddleware, async (c) => {
     });
   } catch (error) {
     logError(error, { context: 'Fetch return stats' });
-    return c.json({ error: 'Failed to fetch return statistics' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -227,7 +229,7 @@ returns.get('/', authMiddleware, async (c) => {
     });
   } catch (error) {
     logError(error, { context: 'Fetch returns list' });
-    return c.json({ error: 'Failed to fetch returns' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -249,12 +251,12 @@ returns.get('/transaction/:transactionId/returnable', authMiddleware, async (c) 
     });
 
     if (!transaction) {
-      return c.json({ error: 'Transaction not found' }, 404);
+      return c.json({ error: ERR.TRANSACTION_NOT_FOUND }, 404);
     }
 
     // Multi-tenant check
     if (user.tenantId && transaction.cabang?.tenantId !== user.tenantId) {
-      return c.json({ error: 'Transaction not found' }, 404);
+      return c.json({ error: ERR.TRANSACTION_NOT_FOUND }, 404);
     }
 
     // Get all previous returns for this transaction (PENDING or COMPLETED)
@@ -297,7 +299,7 @@ returns.get('/transaction/:transactionId/returnable', authMiddleware, async (c) 
     });
   } catch (error) {
     logError(error, { context: 'Get returnable quantities' });
-    return c.json({ error: 'Failed to get returnable quantities' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -362,23 +364,24 @@ returns.get('/:id', authMiddleware, async (c) => {
     });
 
     if (!returnData) {
-      return c.json({ error: 'Return not found' }, 404);
+      return c.json({ error: ERR.RETURN_NOT_FOUND }, 404);
     }
 
     // Multi-tenant: verify user has access to this return's tenant
     if (user.tenantId && returnData.cabang?.tenantId !== user.tenantId) {
-      return c.json({ error: 'Return not found' }, 404);
+      return c.json({ error: ERR.RETURN_NOT_FOUND }, 404);
     }
 
     return c.json({ return: returnData });
   } catch (error) {
     logError(error, { context: 'Fetch return detail' });
-    return c.json({ error: 'Failed to fetch return' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // POST /api/returns - Create new return
-returns.post('/', authMiddleware, async (c) => {
+// Rate limited: 20 returns per 15 minutes
+returns.post('/', rateLimiter({ max: 20 }), authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
     const user = c.get('user');
@@ -415,7 +418,7 @@ returns.post('/', authMiddleware, async (c) => {
     });
 
     if (!transaction) {
-      return c.json({ error: 'Transaction not found' }, 404);
+      return c.json({ error: ERR.TRANSACTION_NOT_FOUND }, 404);
     }
 
     // Check return deadline
@@ -430,7 +433,7 @@ returns.post('/', authMiddleware, async (c) => {
     // If overdue without manager override, reject
     if (isOverdue && !managerOverride) {
       return c.json({
-        error: `Return period expired. Transaction is ${daysSinceTransaction} days old (limit: ${deadlineDays} days)`,
+        error: `Periode return habis. Transaksi sudah ${daysSinceTransaction} hari (batas: ${deadlineDays} hari)`,
         requiresManagerOverride: true,
         daysSinceTransaction,
         deadline: deadlineDays,
@@ -444,7 +447,7 @@ returns.post('/', authMiddleware, async (c) => {
       );
       if (!transactionItem) {
         return c.json({
-          error: `Product variant ${item.productVariantId} not found in transaction`,
+          error: `Varian produk ${item.productVariantId} tidak ditemukan di transaksi`,
         }, 400);
       }
 
@@ -469,7 +472,7 @@ returns.post('/', authMiddleware, async (c) => {
 
       if (item.quantity > maxReturnQty) {
         return c.json({
-          error: `Cannot return ${item.quantity} units of ${transactionItem.productName}. Maximum available: ${maxReturnQty} (${alreadyReturned} already returned)`,
+          error: `Tidak bisa return ${item.quantity} unit ${transactionItem.productName}. Maksimal: ${maxReturnQty} (${alreadyReturned} sudah di-return)`,
           productName: transactionItem.productName,
           requestedQty: item.quantity,
           maxReturnQty,
@@ -510,7 +513,7 @@ returns.post('/', authMiddleware, async (c) => {
         });
 
         if (!variant) {
-          return c.json({ error: `Exchange variant ${exItem.productVariantId} not found` }, 400);
+          return c.json({ error: `Varian tukar ${exItem.productVariantId} tidak ditemukan` }, 400);
         }
 
         const price = variant.stocks[0]?.price || 0;
@@ -674,7 +677,7 @@ returns.post('/', authMiddleware, async (c) => {
     return c.json({ return: returnData }, 201);
   } catch (error) {
     logError(error, { context: 'Create return' });
-    return c.json({ error: 'Failed to create return' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -683,12 +686,15 @@ returns.patch('/:id/approve', authMiddleware, async (c) => {
   try {
     const id = c.req.param('id');
     const body = await c.req.json();
-    const { approvedBy } = body as { approvedBy: string };
-    const user = c.get('user');
-
-    if (!approvedBy) {
-      return c.json({ error: 'Manager approval required' }, 400);
+    
+    // Zod validation
+    const validation = validate(approveReturnSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
+    
+    const { approvedBy } = validation.data;
+    const user = c.get('user');
 
     const returnData = await prisma.return.findUnique({
       where: { id },
@@ -700,11 +706,11 @@ returns.patch('/:id/approve', authMiddleware, async (c) => {
     });
 
     if (!returnData) {
-      return c.json({ error: 'Return not found' }, 404);
+      return c.json({ error: ERR.RETURN_NOT_FOUND }, 404);
     }
 
     if (returnData.status !== 'PENDING') {
-      return c.json({ error: 'Return already processed' }, 400);
+      return c.json({ error: 'Return sudah diproses sebelumnya' }, 400);
     }
 
     const isExchange = returnData.returnType === 'EXCHANGE';
@@ -868,7 +874,7 @@ returns.patch('/:id/approve', authMiddleware, async (c) => {
     if (error.message?.includes('Stok tidak cukup')) {
       return c.json({ error: error.message }, 400);
     }
-    return c.json({ error: 'Failed to approve return' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -877,18 +883,25 @@ returns.patch('/:id/reject', authMiddleware, async (c) => {
   try {
     const id = c.req.param('id');
     const body = await c.req.json();
-    const { rejectedBy, rejectionNotes } = body as { rejectedBy: string; rejectionNotes?: string };
+    
+    // Zod validation
+    const validation = validate(rejectReturnSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
+    }
+    
+    const { rejectedBy, rejectionNotes } = validation.data;
 
     const returnData = await prisma.return.findUnique({
       where: { id },
     });
 
     if (!returnData) {
-      return c.json({ error: 'Return not found' }, 404);
+      return c.json({ error: ERR.RETURN_NOT_FOUND }, 404);
     }
 
     if (returnData.status !== 'PENDING') {
-      return c.json({ error: 'Return already processed' }, 400);
+      return c.json({ error: 'Return sudah diproses sebelumnya' }, 400);
     }
 
     const updatedReturn = await prisma.return.update({
@@ -904,7 +917,7 @@ returns.patch('/:id/reject', authMiddleware, async (c) => {
     return c.json({ return: updatedReturn });
   } catch (error) {
     logError(error, { context: 'Reject return' });
-    return c.json({ error: 'Failed to reject return' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -975,7 +988,7 @@ returns.get('/analytics/products', authMiddleware, async (c) => {
     return c.json({ products });
   } catch (error) {
     logError(error, { context: 'Fetch return analytics by products' });
-    return c.json({ error: 'Failed to fetch analytics' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -1028,7 +1041,7 @@ returns.get('/analytics/reasons', authMiddleware, async (c) => {
     return c.json({ reasons: distribution, total });
   } catch (error) {
     logError(error, { context: 'Fetch return reasons analytics' });
-    return c.json({ error: 'Failed to fetch analytics' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -1108,7 +1121,7 @@ returns.get('/analytics/trend', authMiddleware, async (c) => {
     return c.json({ trend, period });
   } catch (error) {
     logError(error, { context: 'Fetch return trend analytics' });
-    return c.json({ error: 'Failed to fetch analytics' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 

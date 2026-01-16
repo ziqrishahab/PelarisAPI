@@ -1,10 +1,13 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, ownerOnly, type AuthUser } from '../middleware/auth.js';
+import { rateLimiter, strictRateLimiter } from '../middleware/rate-limit.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import logger, { logError } from '../lib/logger.js';
+import { ERR, MSG } from '../lib/messages.js';
+import { validate, restoreBackupSchema, toggleAutoBackupSchema } from '../lib/validators.js';
 
 type Variables = {
   user: AuthUser;
@@ -25,13 +28,14 @@ const ensureBackupDir = async () => {
 const backup = new Hono<{ Variables: Variables }>();
 
 // Manual Database Backup (JSON format - cross-platform compatible)
-backup.post('/database', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 3 backups per 15 minutes
+backup.post('/database', strictRateLimiter({ max: 3 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const user = c.get('user');
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     await ensureBackupDir();
@@ -152,7 +156,7 @@ backup.get('/auto-status', authMiddleware, ownerOnly, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const setting = await prisma.settings.findUnique({
@@ -167,17 +171,25 @@ backup.get('/auto-status', authMiddleware, ownerOnly, async (c) => {
 });
 
 // Toggle Auto Backup
-backup.post('/auto-backup', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 5 toggles per 15 minutes
+backup.post('/auto-backup', rateLimiter({ max: 5 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const user = c.get('user');
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const body = await c.req.json();
-    const { enabled } = body as { enabled: boolean };
+    
+    // Zod validation
+    const validation = validate(toggleAutoBackupSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
+    }
+    
+    const { enabled } = validation.data;
     
     await prisma.settings.upsert({
       where: { tenantId_key: { tenantId, key: 'auto_backup_enabled' } },
@@ -198,7 +210,7 @@ backup.get('/last-backup', authMiddleware, ownerOnly, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const setting = await prisma.settings.findUnique({
@@ -482,13 +494,14 @@ backup.get('/export/report', authMiddleware, ownerOnly, async (c) => {
 });
 
 // Reset Settings to Default
-backup.post('/reset-settings', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 2 per 15 minutes (sensitive operation)
+backup.post('/reset-settings', strictRateLimiter({ max: 2 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const user = c.get('user');
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     // Delete all custom settings except critical ones - tenant-scoped
@@ -501,10 +514,10 @@ backup.post('/reset-settings', authMiddleware, ownerOnly, async (c) => {
       }
     });
     
-    return c.json({ success: true, message: 'Settings reset to default' });
+    return c.json({ success: true, message: 'Pengaturan berhasil direset ke default' });
   } catch (error: any) {
     logError(error, { context: 'Reset settings' });
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -547,7 +560,7 @@ backup.get('/download/:filename', authMiddleware, ownerOnly, async (c) => {
     
     // Validate filename to prevent directory traversal
     if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      return c.json({ error: 'Invalid filename' }, 400);
+      return c.json({ error: ERR.INVALID_FORMAT }, 400);
     }
     
     const filepath = path.join(BACKUP_DIR, filename);
@@ -556,7 +569,7 @@ backup.get('/download/:filename', authMiddleware, ownerOnly, async (c) => {
     try {
       await fs.access(filepath);
     } catch {
-      return c.json({ error: 'Backup file not found' }, 404);
+      return c.json({ error: ERR.BACKUP_NOT_FOUND }, 404);
     }
     
     const content = await fs.readFile(filepath, 'utf8');
@@ -569,18 +582,19 @@ backup.get('/download/:filename', authMiddleware, ownerOnly, async (c) => {
     });
   } catch (error: any) {
     logError(error, { context: 'Download backup' });
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // Delete a backup file
-backup.delete('/delete/:filename', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 10 deletions per 15 minutes
+backup.delete('/delete/:filename', rateLimiter({ max: 10 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const filename = c.req.param('filename');
     
     // Validate filename
     if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      return c.json({ error: 'Invalid filename' }, 400);
+      return c.json({ error: ERR.INVALID_FORMAT }, 400);
     }
     
     const filepath = path.join(BACKUP_DIR, filename);
@@ -588,32 +602,36 @@ backup.delete('/delete/:filename', authMiddleware, ownerOnly, async (c) => {
     try {
       await fs.access(filepath);
     } catch {
-      return c.json({ error: 'Backup file not found' }, 404);
+      return c.json({ error: ERR.BACKUP_NOT_FOUND }, 404);
     }
     
     await fs.unlink(filepath);
     logger.info(`[Backup] Deleted: ${filename}`);
     
-    return c.json({ success: true, message: 'Backup deleted' });
+    return c.json({ success: true, message: 'Backup berhasil dihapus' });
   } catch (error: any) {
     logError(error, { context: 'Delete backup' });
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // Restore database from backup
-backup.post('/restore', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 2 restores per 15 minutes (sensitive operation)
+backup.post('/restore', strictRateLimiter({ max: 2 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const body = await c.req.json();
-    const { filename } = body as { filename: string };
     
-    if (!filename) {
-      return c.json({ error: 'Filename is required' }, 400);
+    // Zod validation
+    const validation = validate(restoreBackupSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
+    
+    const { filename } = validation.data;
     
     // Validate filename
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      return c.json({ error: 'Invalid filename' }, 400);
+      return c.json({ error: ERR.INVALID_FORMAT }, 400);
     }
     
     const filepath = path.join(BACKUP_DIR, filename);
@@ -622,7 +640,7 @@ backup.post('/restore', authMiddleware, ownerOnly, async (c) => {
     try {
       await fs.access(filepath);
     } catch {
-      return c.json({ error: 'Backup file not found' }, 404);
+      return c.json({ error: ERR.BACKUP_NOT_FOUND }, 404);
     }
     
     logger.info(`[Restore] Starting restore from: ${filename}`);
@@ -632,7 +650,7 @@ backup.post('/restore', authMiddleware, ownerOnly, async (c) => {
     const backupData = JSON.parse(content);
     
     if (!backupData.data) {
-      return c.json({ error: 'Invalid backup file format' }, 400);
+      return c.json({ error: ERR.INVALID_FORMAT }, 400);
     }
     
     // Restore in transaction with proper order (respect foreign keys)
@@ -721,13 +739,13 @@ backup.post('/restore', authMiddleware, ownerOnly, async (c) => {
     
     return c.json({ 
       success: true, 
-      message: 'Database restored successfully',
+      message: 'Database berhasil di-restore',
       restoredFrom: filename,
       timestamp: backupData.metadata?.timestamp
     });
   } catch (error: any) {
     logError(error, { context: 'Restore backup' });
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 

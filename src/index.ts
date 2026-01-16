@@ -38,6 +38,9 @@ import tenants from './routes/tenants.js';
 // Import socket helper
 import { initSocket } from './lib/socket.js';
 
+// Import JWT for socket authentication
+import { verifyToken } from './lib/jwt.js';
+
 // Import backup scheduler
 import { startBackupScheduler, stopBackupScheduler } from './lib/backup-scheduler.js';
 
@@ -289,12 +292,57 @@ const io = new Server(server, {
 // Initialize socket helper
 initSocket(io);
 
+// Socket.io Authentication Middleware
+io.use((socket, next) => {
+  try {
+    // Get token from handshake auth or query params (for compatibility)
+    const token = socket.handshake.auth?.token 
+      || socket.handshake.headers?.authorization?.replace('Bearer ', '')
+      || socket.handshake.query?.token as string;
+    
+    if (!token) {
+      logger.warn('[Socket] Connection rejected: No token provided', { socketId: socket.id });
+      return next(new Error('Authentication required'));
+    }
+    
+    const decoded = verifyToken(token);
+    if (!decoded) {
+      logger.warn('[Socket] Connection rejected: Invalid token', { socketId: socket.id });
+      return next(new Error('Invalid or expired token'));
+    }
+    
+    // Attach user data to socket for later use
+    socket.data.user = decoded;
+    logger.info('[Socket] User authenticated', { 
+      socketId: socket.id, 
+      userId: decoded.userId, 
+      role: decoded.role 
+    });
+    
+    next();
+  } catch (error) {
+    logger.error('[Socket] Authentication error', { socketId: socket.id, error });
+    next(new Error('Authentication failed'));
+  }
+});
+
 // Socket.io connection handler
 io.on('connection', (socket) => {
-  logSocket('connected', socket.id);
+  const user = socket.data.user;
+  logSocket('connected', socket.id, { userId: user?.userId, role: user?.role });
+  
+  // Join user to their tenant room for tenant-specific events
+  if (user?.tenantId) {
+    socket.join(`tenant:${user.tenantId}`);
+  }
+  
+  // Join user to their cabang room for branch-specific events
+  if (user?.cabangId) {
+    socket.join(`cabang:${user.cabangId}`);
+  }
   
   socket.on('disconnect', () => {
-    logSocket('disconnected', socket.id);
+    logSocket('disconnected', socket.id, { userId: user?.userId });
   });
 });
 

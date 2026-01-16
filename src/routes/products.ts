@@ -1,12 +1,15 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, ownerOrManager, type AuthUser } from '../middleware/auth.js';
+import { rateLimiter, strictRateLimiter } from '../middleware/rate-limit.js';
 import { emitProductCreated, emitProductUpdated, emitProductDeleted, emitCategoryUpdated, emitStockUpdated } from '../lib/socket.js';
 import logger, { logError } from '../lib/logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ExcelHelper } from '../lib/excel.js';
 import { validate, createCategorySchema, updateCategorySchema } from '../lib/validators.js';
+import { sanitizeString, sanitizeText, sanitizeSku, sanitizeUrl, sanitizePositiveInt, sanitizeNumber } from '../lib/sanitize.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 type Variables = {
   user: AuthUser;
@@ -56,7 +59,7 @@ products.get('/categories', authMiddleware, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const categories = await prisma.category.findMany({
@@ -73,8 +76,8 @@ products.get('/categories', authMiddleware, async (c) => {
     });
     return c.json(categories);
   } catch (error) {
-    logError(error, { context: 'Get categories error:' });
-    return c.json({ error: 'Internal server error' }, 500);
+    logError(error, { context: 'Gagal mengambil kategori' });
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -85,7 +88,7 @@ products.post('/categories', authMiddleware, ownerOrManager, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const body = await c.req.json();
@@ -103,11 +106,11 @@ products.post('/categories', authMiddleware, ownerOrManager, async (c) => {
     emitCategoryUpdated(category);
     return c.json(category, 201);
   } catch (error: any) {
-    logError(error, { context: 'Create category error:' });
+    logError(error, { context: 'Gagal membuat kategori' });
     if (error.code === 'P2002') {
-      return c.json({ error: 'Category name already exists' }, 400);
+      return c.json({ error: ERR.CATEGORY_EXISTS }, 400);
     }
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -118,7 +121,7 @@ products.put('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const id = c.req.param('id');
@@ -131,7 +134,7 @@ products.put('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
     const { name, description } = validation.data;
 
     if (!name) {
-      return c.json({ error: 'Category name is required' }, 400);
+      return c.json({ error: ERR.CATEGORY_NAME_REQUIRED }, 400);
     }
 
     // Verify category belongs to tenant
@@ -140,7 +143,7 @@ products.put('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
     });
 
     if (!existingCategory || existingCategory.tenantId !== tenantId) {
-      return c.json({ error: 'Category not found' }, 404);
+      return c.json({ error: ERR.CATEGORY_NOT_FOUND }, 404);
     }
 
     const category = await prisma.category.update({
@@ -151,14 +154,14 @@ products.put('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
     emitCategoryUpdated(category);
     return c.json(category);
   } catch (error: any) {
-    logError(error, { context: 'Update category error:' });
+    logError(error, { context: 'Gagal update kategori' });
     if (error.code === 'P2002') {
-      return c.json({ error: 'Category name already exists' }, 400);
+      return c.json({ error: ERR.CATEGORY_EXISTS }, 400);
     }
     if (error.code === 'P2025') {
-      return c.json({ error: 'Category not found' }, 404);
+      return c.json({ error: ERR.CATEGORY_NOT_FOUND }, 404);
     }
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -169,7 +172,7 @@ products.delete('/categories/:id', authMiddleware, ownerOrManager, async (c) => 
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const id = c.req.param('id');
@@ -180,7 +183,7 @@ products.delete('/categories/:id', authMiddleware, ownerOrManager, async (c) => 
     });
 
     if (!existingCategory || existingCategory.tenantId !== tenantId) {
-      return c.json({ error: 'Category not found' }, 404);
+      return c.json({ error: ERR.CATEGORY_NOT_FOUND }, 404);
     }
     
     // Use transaction for atomic deletion of category and related data
@@ -222,28 +225,34 @@ products.delete('/categories/:id', authMiddleware, ownerOrManager, async (c) => 
   } catch (error: any) {
     logError(error, { context: 'Delete category error:' });
     if (error.code === 'P2025') {
-      return c.json({ error: 'Category not found' }, 404);
+      return c.json({ error: ERR.CATEGORY_NOT_FOUND }, 404);
     }
     if (error.code === 'P2003') {
-      return c.json({ error: 'Cannot delete category. It still has products.' }, 400);
+      return c.json({ error: ERR.CATEGORY_HAS_PRODUCTS }, 400);
     }
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
-// Get all products with filters
+// Get all products with filters and pagination
 products.get('/', authMiddleware, async (c) => {
   try {
     const user = c.get('user');
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: 'Diperlukan scope tenant' }, 400);
     }
 
+    // Query parameters
     const categoryId = c.req.query('categoryId');
     const search = c.req.query('search');
     const isActive = c.req.query('isActive');
+    
+    // Pagination parameters
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200); // Max 200
+    const skip = (page - 1) * limit;
 
     const where: any = {
       tenantId: tenantId // Filter by tenant
@@ -277,7 +286,12 @@ products.get('/', authMiddleware, async (c) => {
       where.OR = searchConditions;
     }
 
-    let productList = await prisma.product.findMany({
+    // Get total count for pagination
+    const totalCount = await prisma.product.count({ where });
+    const totalPages = Math.ceil(totalCount / limit);
+
+    // Fetch products with pagination
+    const productList = await prisma.product.findMany({
       where,
       include: {
         category: true,
@@ -290,18 +304,27 @@ products.get('/', authMiddleware, async (c) => {
             }
           }
         }
-      }
+      },
+      orderBy: search ? undefined : { name: 'asc' },
+      skip,
+      take: limit,
     });
 
-    // Sort by name if no search
-    if (!search) {
-      productList.sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    return c.json(productList);
+    // Return with pagination metadata
+    return c.json({
+      data: productList,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      }
+    });
   } catch (error) {
-    logError(error, { context: 'Get products error:' });
-    return c.json({ error: 'Internal server error' }, 500);
+    logError(error, { context: 'Gagal mengambil data produk' });
+    return c.json({ error: 'Terjadi kesalahan server' }, 500);
   }
 });
 
@@ -312,7 +335,7 @@ products.get('/template', authMiddleware, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const categories = await prisma.category.findMany({ 
@@ -611,7 +634,7 @@ products.get('/adjustments/all', authMiddleware, ownerOrManager, async (c) => {
     return c.json({ data: adjustments, stats });
   } catch (error) {
     logError(error, { context: 'Get all adjustments error:' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -622,7 +645,7 @@ products.get('/:id', authMiddleware, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const id = c.req.param('id');
@@ -640,13 +663,13 @@ products.get('/:id', authMiddleware, async (c) => {
     });
 
     if (!product || product.tenantId !== tenantId) {
-      return c.json({ error: 'Product not found' }, 404);
+      return c.json({ error: ERR.PRODUCT_NOT_FOUND }, 404);
     }
 
     return c.json(product);
   } catch (error) {
     logError(error, { context: 'Get product error:' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -670,7 +693,7 @@ products.get('/stock/:variantId', authMiddleware, async (c) => {
     return c.json(stocks);
   } catch (error) {
     logError(error, { context: 'Get stock error:' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -695,25 +718,26 @@ products.get('/stock/:variantId/:cabangId/adjustments', authMiddleware, async (c
     return c.json(adjustments);
   } catch (error) {
     logError(error, { context: 'Get adjustments error:' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // Create product (Owner/Manager only)
-products.post('/', authMiddleware, ownerOrManager, async (c) => {
+// Rate limited: 50 products per 15 minutes
+products.post('/', rateLimiter({ max: 50 }), authMiddleware, ownerOrManager, async (c) => {
   try {
     const user = c.get('user');
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const body = await c.req.json() as ProductBody;
     const { name, description, categoryId, productType, variants, sku, stocks } = body;
 
     if (!name || !categoryId || !productType) {
-      return c.json({ error: 'Name, category, and product type are required' }, 400);
+      return c.json({ error: 'Nama, kategori, dan tipe produk wajib diisi' }, 400);
     }
 
     // Verify category belongs to tenant
@@ -722,14 +746,14 @@ products.post('/', authMiddleware, ownerOrManager, async (c) => {
     });
 
     if (!category || category.tenantId !== tenantId) {
-      return c.json({ error: 'Category not found or access denied' }, 404);
+      return c.json({ error: ERR.CATEGORY_NOT_FOUND }, 404);
     }
 
     if (productType === 'SINGLE') {
-      if (!sku) return c.json({ error: 'SKU is required for single product' }, 400);
-      if (!stocks || stocks.length === 0) return c.json({ error: 'At least one cabang with price is required' }, 400);
+      if (!sku) return c.json({ error: ERR.SKU_REQUIRED }, 400);
+      if (!stocks || stocks.length === 0) return c.json({ error: ERR.STOCK_REQUIRED }, 400);
     } else if (productType === 'VARIANT') {
-      if (!variants || variants.length === 0) return c.json({ error: 'At least one variant is required for variant product' }, 400);
+      if (!variants || variants.length === 0) return c.json({ error: ERR.VARIANT_REQUIRED }, 400);
     }
 
     const product = await prisma.$transaction(async (tx) => {
@@ -799,8 +823,8 @@ products.post('/', authMiddleware, ownerOrManager, async (c) => {
     return c.json(product, 201);
   } catch (error: any) {
     logError(error, { context: 'Create product error:' });
-    if (error.code === 'P2002') return c.json({ error: 'SKU already exists' }, 400);
-    return c.json({ error: 'Internal server error' }, 500);
+    if (error.code === 'P2002') return c.json({ error: ERR.SKU_EXISTS }, 400);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -811,7 +835,7 @@ products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const id = c.req.param('id');
@@ -824,7 +848,7 @@ products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
     });
 
     if (!existingProduct || existingProduct.tenantId !== tenantId) {
-      return c.json({ error: 'Product not found' }, 404);
+      return c.json({ error: ERR.PRODUCT_NOT_FOUND }, 404);
     }
 
     // Verify category belongs to tenant if categoryId is being updated
@@ -834,7 +858,7 @@ products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
       });
 
       if (!category || category.tenantId !== tenantId) {
-        return c.json({ error: 'Category not found or access denied' }, 404);
+        return c.json({ error: ERR.CATEGORY_NOT_FOUND }, 404);
       }
     }
 
@@ -953,20 +977,21 @@ products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
     return c.json(product);
   } catch (error: any) {
     logError(error, { context: 'Update product error:' });
-    if (error.code === 'P2025') return c.json({ error: 'Product not found' }, 404);
-    if (error.code === 'P2002') return c.json({ error: 'SKU already exists' }, 400);
-    return c.json({ error: 'Internal server error' }, 500);
+    if (error.code === 'P2025') return c.json({ error: ERR.PRODUCT_NOT_FOUND }, 404);
+    if (error.code === 'P2002') return c.json({ error: ERR.SKU_EXISTS }, 400);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // Delete product (Owner/Manager only)
-products.delete('/:id', authMiddleware, ownerOrManager, async (c) => {
+// Rate limited: 20 deletions per 15 minutes
+products.delete('/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOrManager, async (c) => {
   try {
     const user = c.get('user');
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const id = c.req.param('id');
@@ -981,7 +1006,7 @@ products.delete('/:id', authMiddleware, ownerOrManager, async (c) => {
     });
 
     if (!product || product.tenantId !== tenantId) {
-      return c.json({ error: 'Product not found' }, 404);
+      return c.json({ error: ERR.PRODUCT_NOT_FOUND }, 404);
     }
 
     const hasTransactions = product.variants.some(v => v.transactionItems.length > 0);
@@ -1005,8 +1030,8 @@ products.delete('/:id', authMiddleware, ownerOrManager, async (c) => {
     return c.json({ message: 'Product deleted successfully', action: 'deleted' });
   } catch (error: any) {
     logError(error, { context: 'Delete product error:' });
-    if (error.code === 'P2025') return c.json({ error: 'Product not found' }, 404);
-    return c.json({ error: 'Internal server error' }, 500);
+    if (error.code === 'P2025') return c.json({ error: ERR.PRODUCT_NOT_FOUND }, 404);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -1094,7 +1119,8 @@ products.put('/stock/:variantId/:cabangId', authMiddleware, ownerOrManager, asyn
 });
 
 // Import Products from Excel - Full implementation with Hono multipart
-products.post('/import', authMiddleware, ownerOrManager, async (c) => {
+// Rate limited: 3 imports per 15 minutes (heavy operation)
+products.post('/import', strictRateLimiter({ max: 3 }), authMiddleware, ownerOrManager, async (c) => {
   let tempFilePath: string | null = null;
   
   // File size limit: 10MB
@@ -1151,7 +1177,7 @@ products.post('/import', authMiddleware, ownerOrManager, async (c) => {
         const tenantId = user.tenantId;
         
         if (!tenantId) {
-          return c.json({ error: 'Tenant scope required' }, 400);
+          return c.json({ error: ERR.TENANT_REQUIRED }, 400);
         }
 
         const categories = await prisma.category.findMany({
@@ -1208,19 +1234,19 @@ products.post('/import', authMiddleware, ownerOrManager, async (c) => {
         const hasData = Object.values(row).some(val => val !== '' && val !== null && val !== undefined);
         if (!hasData) continue;
 
-        // Support both formats (with and without asterisks)
-        const sku = (row['SKU*'] || row['SKU'])?.toString().trim();
-        const productName = (row['Nama Produk*'] || row['Nama Produk'])?.toString().trim();
-        const categoryName = (row['Kategori*'] || row['Kategori'])?.toString().trim();
-        const productType = (row['Tipe Produk*'] || row['Tipe Produk'])?.toString().toUpperCase().trim();
-        const price = parseInt(row['Harga*'] || row['Harga']);
+        // Support both formats (with and without asterisks) - WITH SANITIZATION
+        const sku = sanitizeSku(row['SKU*'] || row['SKU']);
+        const productName = sanitizeString(row['Nama Produk*'] || row['Nama Produk'], 200);
+        const categoryName = sanitizeString(row['Kategori*'] || row['Kategori'], 100);
+        const productType = sanitizeString(row['Tipe Produk*'] || row['Tipe Produk'], 10)?.toUpperCase();
+        const price = sanitizePositiveInt(row['Harga*'] || row['Harga']);
         const stockRaw = row['Stok*'] || row['Stok'];
-        const stock = (stockRaw === '' || stockRaw === null || stockRaw === undefined) ? 0 : parseInt(stockRaw);
-        const cabangName = (row['Cabang*'] || row['Cabang'])?.toString().trim();
+        const stock = sanitizePositiveInt(stockRaw);
+        const cabangName = sanitizeString(row['Cabang*'] || row['Cabang'], 100);
         
-        // Parse alert data (optional)
-        const minAlert = row['Min Alert'] ? parseInt(row['Min Alert']) : null;
-        const alertActive = row['Alert Active']?.toString().trim().toLowerCase();
+        // Parse alert data (optional) - WITH SANITIZATION
+        const minAlert = row['Min Alert'] ? sanitizePositiveInt(row['Min Alert']) : null;
+        const alertActive = sanitizeString(row['Alert Active'])?.toLowerCase();
         const isAlertActive = alertActive === 'yes' || alertActive === 'ya' || alertActive === '1' || alertActive === 'true';
 
         // Validate required fields (stock defaults to 0 if empty)
@@ -1354,7 +1380,7 @@ products.post('/import', authMiddleware, ownerOrManager, async (c) => {
         if (!productsToCreate.has(productKey)) {
           productsToCreate.set(productKey, {
             name: productName,
-            description: (row['Deskripsi'] || '')?.toString().trim(),
+            description: sanitizeText(row['Deskripsi'], 1000), // Sanitize description
             categoryId: category.id,
             productType,
             isActive: true,
@@ -1369,7 +1395,7 @@ products.post('/import', authMiddleware, ownerOrManager, async (c) => {
           continue;
         }
 
-        // Parse variant attributes
+        // Parse variant attributes - WITH SANITIZATION
         let variantName = 'Default';
         let variantValue = 'Default';
         
@@ -1378,8 +1404,8 @@ products.post('/import', authMiddleware, ownerOrManager, async (c) => {
           const values: string[] = [];
           
           for (let n = 1; n <= 3; n++) {
-            const typeN = row[`Type ${n}`]?.toString().trim();
-            const valueN = row[`Value ${n}`]?.toString().trim();
+            const typeN = sanitizeString(row[`Type ${n}`], 50);
+            const valueN = sanitizeString(row[`Value ${n}`], 50);
             if (typeN && valueN) {
               types.push(typeN);
               values.push(valueN);
@@ -1395,11 +1421,12 @@ products.post('/import', authMiddleware, ownerOrManager, async (c) => {
           variantValue = values.join(' | ');
         }
 
-        const weight = row['Berat (g)'] ? parseInt(row['Berat (g)']) : null;
-        const length = row['Panjang (cm)'] ? parseInt(row['Panjang (cm)']) : null;
-        const width = row['Lebar (cm)'] ? parseInt(row['Lebar (cm)']) : null;
-        const height = row['Tinggi (cm)'] ? parseInt(row['Tinggi (cm)']) : null;
-        const imageUrl = row['Link Gambar']?.toString().trim() || null;
+        // Sanitize dimensions and URL
+        const weight = row['Berat (g)'] ? sanitizePositiveInt(row['Berat (g)']) : null;
+        const length = row['Panjang (cm)'] ? sanitizePositiveInt(row['Panjang (cm)']) : null;
+        const width = row['Lebar (cm)'] ? sanitizePositiveInt(row['Lebar (cm)']) : null;
+        const height = row['Tinggi (cm)'] ? sanitizePositiveInt(row['Tinggi (cm)']) : null;
+        const imageUrl = sanitizeUrl(row['Link Gambar']);
 
         productData.variants.push({
           sku, variantName, variantValue, weight, length, width, height, imageUrl,

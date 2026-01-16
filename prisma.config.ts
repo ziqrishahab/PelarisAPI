@@ -1,4 +1,8 @@
 import { defineConfig } from "prisma/config";
+import { config } from "dotenv";
+
+// Load .env file manually since Prisma config skips auto-loading
+config();
 
 // For build time (prisma generate), DATABASE_URL is not required
 // Prisma generate only needs the schema, not a database connection

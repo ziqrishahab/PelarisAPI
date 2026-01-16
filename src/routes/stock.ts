@@ -1,10 +1,12 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, type AuthUser } from '../middleware/auth.js';
+import { rateLimiter } from '../middleware/rate-limit.js';
 import { emitStockUpdated } from '../lib/socket.js';
 import { logStock, logError } from '../lib/logger.js';
 import { validate, stockAdjustmentSchema } from '../lib/validators.js';
 import { createAuditLog } from '../lib/audit.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 type Variables = {
   user: AuthUser;
@@ -84,19 +86,20 @@ stock.get('/adjustments', authMiddleware, async (c) => {
     });
   } catch (error) {
     logError(error, { context: 'Fetch adjustments' });
-    return c.json({ error: 'Failed to fetch adjustments' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // POST /api/stock/adjustment - Create a stock adjustment
-stock.post('/adjustment', authMiddleware, async (c) => {
+// Rate limited: 30 adjustments per 5 minutes (prevent accidental mass adjustments)
+stock.post('/adjustment', rateLimiter({ max: 30, windowMs: 5 * 60 * 1000 }), authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
     const user = c.get('user');
     const userId = user?.userId;
     
     if (!userId) {
-      return c.json({ error: 'User not authenticated' }, 401);
+      return c.json({ error: ERR.UNAUTHORIZED }, 401);
     }
     
     // Zod validation
@@ -124,7 +127,7 @@ stock.post('/adjustment', authMiddleware, async (c) => {
     });
     
     if (!stockRecord) {
-      return c.json({ error: 'Stock record not found for this variant and cabang' }, 404);
+      return c.json({ error: ERR.STOCK_NOT_FOUND }, 404);
     }
     
     const previousQty = stockRecord.quantity;
@@ -134,7 +137,7 @@ stock.post('/adjustment', authMiddleware, async (c) => {
     // Check if subtracting would result in negative stock
     if (newQty < 0) {
       return c.json({ 
-        error: `Cannot subtract ${quantity}. Current stock is only ${previousQty}` 
+        error: `Tidak bisa mengurangi ${quantity}. Stok saat ini hanya ${previousQty}` 
       }, 400);
     }
     
@@ -237,7 +240,7 @@ stock.post('/adjustment', authMiddleware, async (c) => {
     
   } catch (error: any) {
     logError(error, { context: 'Stock adjustment' });
-    return c.json({ error: 'Failed to create adjustment: ' + error.message }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -267,7 +270,7 @@ stock.get('/adjustment/:variantId/:cabangId/history', authMiddleware, async (c) 
     return c.json({ data: adjustments });
   } catch (error) {
     logError(error, { context: 'Fetch adjustment history' });
-    return c.json({ error: 'Failed to fetch adjustment history' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -278,11 +281,11 @@ stock.post('/alert', authMiddleware, async (c) => {
     const { variantId, cabangId, minStock } = body;
     
     if (!variantId || !cabangId || minStock === undefined) {
-      return c.json({ error: 'Missing required fields: variantId, cabangId, minStock' }, 400);
+      return c.json({ error: ERR.REQUIRED_FIELDS }, 400);
     }
     
     if (minStock < 0) {
-      return c.json({ error: 'minStock must be >= 0' }, 400);
+      return c.json({ error: 'Minimal stok harus >= 0' }, 400);
     }
     
     // Check if stock exists
@@ -302,7 +305,7 @@ stock.post('/alert', authMiddleware, async (c) => {
     });
     
     if (!stockRecord) {
-      return c.json({ error: 'Stock not found for this variant and cabang' }, 404);
+      return c.json({ error: ERR.STOCK_NOT_FOUND }, 404);
     }
     
     // Create or update alert
@@ -341,7 +344,7 @@ stock.post('/alert', authMiddleware, async (c) => {
     
   } catch (error: any) {
     logError(error, { context: 'Set stock alert' });
-    return c.json({ error: 'Failed to set alert: ' + error.message }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -363,7 +366,7 @@ stock.get('/alert/:variantId/:cabangId', authMiddleware, async (c) => {
     return c.json({ data: alert });
   } catch (error) {
     logError(error, { context: 'Fetch stock alert' });
-    return c.json({ error: 'Failed to fetch alert' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -387,11 +390,11 @@ stock.delete('/alert/:variantId/:cabangId', authMiddleware, async (c) => {
     
     return c.json({
       success: true,
-      message: 'Alert berhasil dinonaktifkan'
+      message: MSG.ALERT_DELETED
     });
   } catch (error) {
     logError(error, { context: 'Delete stock alert' });
-    return c.json({ error: 'Failed to delete alert' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -428,7 +431,7 @@ stock.get('/alerts/low', authMiddleware, async (c) => {
     return c.json({ data: lowStockItems });
   } catch (error) {
     logError(error, { context: 'Fetch low stock items' });
-    return c.json({ error: 'Failed to fetch low stock items' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -453,7 +456,7 @@ stock.get('/alerts', authMiddleware, async (c) => {
     return c.json({ data: alerts });
   } catch (error) {
     logError(error, { context: 'Fetch stock alerts' });
-    return c.json({ error: 'Failed to fetch alerts' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 

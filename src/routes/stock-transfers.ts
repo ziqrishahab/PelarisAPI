@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, type AuthUser } from '../middleware/auth.js';
+import { rateLimiter } from '../middleware/rate-limit.js';
 import { emitStockUpdated } from '../lib/socket.js';
 import logger, { logError } from '../lib/logger.js';
 import { validate, stockTransferSchema } from '../lib/validators.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 type Variables = {
   user: AuthUser;
@@ -30,13 +32,14 @@ const stockTransfers = new Hono<{ Variables: Variables }>();
 // Create stock transfer request
 // ADMIN: Creates with PENDING status (needs approval)
 // MANAGER/OWNER: Creates with COMPLETED status (auto-approved)
-stockTransfers.post('/', authMiddleware, async (c) => {
+// Rate limited: 30 transfers per 15 minutes
+stockTransfers.post('/', rateLimiter({ max: 30 }), authMiddleware, async (c) => {
   try {
     const user = c.get('user');
     
     // Only ADMIN, MANAGER, OWNER can create transfers
     if (user.role === 'KASIR') {
-      return c.json({ error: 'Access denied' }, 403);
+      return c.json({ error: ERR.FORBIDDEN }, 403);
     }
 
     const body = await c.req.json();
@@ -67,12 +70,12 @@ stockTransfers.post('/', authMiddleware, async (c) => {
     });
 
     if (!sourceStock) {
-      return c.json({ error: 'Source stock not found' }, 404);
+      return c.json({ error: ERR.SOURCE_STOCK_NOT_FOUND }, 404);
     }
 
     if (sourceStock.quantity < quantity) {
       return c.json({ 
-        error: `Insufficient stock. Available: ${sourceStock.quantity}` 
+        error: `Stok tidak mencukupi. Tersedia: ${sourceStock.quantity}` 
       }, 400);
     }
 
@@ -163,7 +166,7 @@ stockTransfers.post('/', authMiddleware, async (c) => {
     return c.json(result, 201);
   } catch (error) {
     logError(error, { context: 'Create stock transfer' });
-    return c.json({ error: 'Failed to create stock transfer' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -174,7 +177,7 @@ stockTransfers.patch('/:id/approve', authMiddleware, async (c) => {
     
     // Only MANAGER/OWNER can approve
     if (user.role !== 'MANAGER' && user.role !== 'OWNER') {
-      return c.json({ error: 'Only Manager/Owner can approve transfers' }, 403);
+      return c.json({ error: 'Hanya Manager/Owner yang bisa menyetujui transfer' }, 403);
     }
 
     const id = c.req.param('id');
@@ -191,11 +194,11 @@ stockTransfers.patch('/:id/approve', authMiddleware, async (c) => {
     });
 
     if (!transfer) {
-      return c.json({ error: 'Transfer not found' }, 404);
+      return c.json({ error: ERR.TRANSFER_NOT_FOUND }, 404);
     }
 
     if (transfer.status !== 'PENDING') {
-      return c.json({ error: 'Transfer already processed' }, 400);
+      return c.json({ error: 'Transfer sudah diproses sebelumnya' }, 400);
     }
 
     // Check stock availability
@@ -210,7 +213,7 @@ stockTransfers.patch('/:id/approve', authMiddleware, async (c) => {
 
     if (!sourceStock || sourceStock.quantity < transfer.quantity) {
       return c.json({ 
-        error: `Insufficient stock. Available: ${sourceStock?.quantity || 0}` 
+        error: `Stok tidak mencukupi. Tersedia: ${sourceStock?.quantity || 0}` 
       }, 400);
     }
 
@@ -281,7 +284,7 @@ stockTransfers.patch('/:id/approve', authMiddleware, async (c) => {
     return c.json(result);
   } catch (error) {
     logError(error, { context: 'Approve stock transfer' });
-    return c.json({ error: 'Failed to approve transfer' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -298,17 +301,17 @@ stockTransfers.patch('/:id/reject', authMiddleware, async (c) => {
     });
 
     if (!transfer) {
-      return c.json({ error: 'Transfer not found' }, 404);
+      return c.json({ error: ERR.TRANSFER_NOT_FOUND }, 404);
     }
 
     if (transfer.status !== 'PENDING') {
-      return c.json({ error: 'Transfer already processed' }, 400);
+      return c.json({ error: 'Transfer sudah diproses sebelumnya' }, 400);
     }
 
     // ADMIN can only cancel their own transfers
     // MANAGER/OWNER can cancel any
     if (user.role === 'ADMIN' && transfer.transferredById !== user.userId) {
-      return c.json({ error: 'You can only cancel your own transfer requests' }, 403);
+      return c.json({ error: 'Anda hanya bisa membatalkan request transfer milik sendiri' }, 403);
     }
 
     const result = await prisma.stockTransfer.update({
@@ -332,7 +335,7 @@ stockTransfers.patch('/:id/reject', authMiddleware, async (c) => {
     return c.json(result);
   } catch (error) {
     logError(error, { context: 'Reject stock transfer' });
-    return c.json({ error: 'Failed to reject transfer' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -343,7 +346,7 @@ stockTransfers.get('/', authMiddleware, async (c) => {
     
     // Only ADMIN, MANAGER, OWNER can view transfers
     if (user.role === 'KASIR') {
-      return c.json({ error: 'Access denied' }, 403);
+      return c.json({ error: ERR.FORBIDDEN }, 403);
     }
 
     const cabangId = c.req.query('cabangId');
@@ -394,7 +397,7 @@ stockTransfers.get('/', authMiddleware, async (c) => {
     return c.json(transfers);
   } catch (error) {
     logError(error, { context: 'Get stock transfers' });
-    return c.json({ error: 'Failed to fetch stock transfers' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -405,7 +408,7 @@ stockTransfers.get('/:id', authMiddleware, async (c) => {
     
     // Only ADMIN, MANAGER, OWNER can view transfers
     if (user.role === 'KASIR') {
-      return c.json({ error: 'Access denied' }, 403);
+      return c.json({ error: ERR.FORBIDDEN }, 403);
     }
 
     const id = c.req.param('id');
@@ -427,13 +430,13 @@ stockTransfers.get('/:id', authMiddleware, async (c) => {
     });
 
     if (!transfer) {
-      return c.json({ error: 'Transfer not found' }, 404);
+      return c.json({ error: ERR.TRANSFER_NOT_FOUND }, 404);
     }
 
     return c.json(transfer);
   } catch (error) {
     logError(error, { context: 'Get stock transfer' });
-    return c.json({ error: 'Failed to fetch transfer' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -444,7 +447,7 @@ stockTransfers.get('/stats/summary', authMiddleware, async (c) => {
     
     // Only ADMIN, MANAGER, OWNER can view stats
     if (user.role === 'KASIR') {
-      return c.json({ error: 'Access denied' }, 403);
+      return c.json({ error: ERR.FORBIDDEN }, 403);
     }
 
     const cabangId = c.req.query('cabangId');
@@ -485,7 +488,7 @@ stockTransfers.get('/stats/summary', authMiddleware, async (c) => {
     });
   } catch (error) {
     logError(error, { context: 'Get transfer stats' });
-    return c.json({ error: 'Failed to fetch transfer statistics' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 

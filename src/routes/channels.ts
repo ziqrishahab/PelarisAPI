@@ -1,7 +1,10 @@
 ﻿import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, ownerOnly, ownerOrManager } from '../middleware/auth.js';
+import { rateLimiter, strictRateLimiter } from '../middleware/rate-limit.js';
 import { logError } from '../lib/logger.js';
+import { ERR, MSG } from '../lib/messages.js';
+import { validate, createChannelSchema, updateChannelSchema, channelStockAllocationSchema } from '../lib/validators.js';
 
 const channels = new Hono();
 
@@ -55,7 +58,7 @@ channels.get('/stats/summary', authMiddleware, async (c) => {
     return c.json(stats);
   } catch (error) {
     logError(error, { context: 'Fetch channel stats' });
-    return c.json({ error: 'Failed to fetch channel stats' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -80,7 +83,7 @@ channels.get('/', authMiddleware, async (c) => {
     return c.json(allChannels);
   } catch (error) {
     logError(error, { context: 'Fetch channels' });
-    return c.json({ error: 'Failed to fetch channels' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -99,25 +102,29 @@ channels.get('/:id', authMiddleware, async (c) => {
     });
 
     if (!channel) {
-      return c.json({ error: 'Channel not found' }, 404);
+      return c.json({ error: ERR.CHANNEL_NOT_FOUND }, 404);
     }
 
     return c.json(channel);
   } catch (error) {
     logError(error, { context: 'Fetch channel' });
-    return c.json({ error: 'Failed to fetch channel' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // POST /api/channels - Create new channel (OWNER/MANAGER only)
-channels.post('/', authMiddleware, ownerOrManager, async (c) => {
+// Rate limited: 10 channels per 15 minutes
+channels.post('/', rateLimiter({ max: 10 }), authMiddleware, ownerOrManager, async (c) => {
   try {
     const body = await c.req.json();
-    const { code, name, type, icon, color, apiConfig, fieldMapping } = body;
-
-    if (!code || !name) {
-      return c.json({ error: 'Code and name are required' }, 400);
+    
+    // Zod validation
+    const validation = validate(createChannelSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
+    
+    const { code, name, type, icon, color, apiConfig, fieldMapping } = validation.data;
 
     // Check if code already exists
     const existing = await prisma.salesChannel.findUnique({
@@ -125,7 +132,7 @@ channels.post('/', authMiddleware, ownerOrManager, async (c) => {
     });
 
     if (existing) {
-      return c.json({ error: 'Channel code already exists' }, 400);
+      return c.json({ error: ERR.CHANNEL_CODE_EXISTS }, 400);
     }
 
     const channel = await prisma.salesChannel.create({
@@ -144,7 +151,7 @@ channels.post('/', authMiddleware, ownerOrManager, async (c) => {
     return c.json(channel, 201);
   } catch (error) {
     logError(error, { context: 'Create channel' });
-    return c.json({ error: 'Failed to create channel' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -153,12 +160,19 @@ channels.put('/:id', authMiddleware, ownerOrManager, async (c) => {
   try {
     const id = c.req.param('id');
     const body = await c.req.json();
-    const { name, type, icon, color, isActive, apiConfig, fieldMapping } = body;
+    
+    // Zod validation
+    const validation = validate(updateChannelSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
+    }
+    
+    const { name, type, icon, color, isActive, apiConfig, fieldMapping } = validation.data;
 
     const channel = await prisma.salesChannel.findUnique({ where: { id } });
 
     if (!channel) {
-      return c.json({ error: 'Channel not found' }, 404);
+      return c.json({ error: ERR.CHANNEL_NOT_FOUND }, 404);
     }
 
     // Cannot modify built-in channel's code
@@ -180,23 +194,24 @@ channels.put('/:id', authMiddleware, ownerOrManager, async (c) => {
     return c.json(updated);
   } catch (error) {
     logError(error, { context: 'Update channel' });
-    return c.json({ error: 'Failed to update channel' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // DELETE /api/channels/:id - Delete channel (soft delete by setting isActive = false)
-channels.delete('/:id', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 5 deletions per 15 minutes
+channels.delete('/:id', strictRateLimiter({ max: 5 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const id = c.req.param('id');
 
     const channel = await prisma.salesChannel.findUnique({ where: { id } });
 
     if (!channel) {
-      return c.json({ error: 'Channel not found' }, 404);
+      return c.json({ error: ERR.CHANNEL_NOT_FOUND }, 404);
     }
 
     if (channel.isBuiltIn) {
-      return c.json({ error: 'Cannot delete built-in channel' }, 400);
+      return c.json({ error: 'Channel bawaan tidak bisa dihapus' }, 400);
     }
 
     // Check if channel has transactions
@@ -210,15 +225,15 @@ channels.delete('/:id', authMiddleware, ownerOnly, async (c) => {
         where: { id },
         data: { isActive: false }
       });
-      return c.json({ message: 'Channel deactivated (has transactions)' });
+      return c.json({ message: 'Channel dinonaktifkan (memiliki transaksi)' });
     } else {
       // Hard delete
       await prisma.salesChannel.delete({ where: { id } });
-      return c.json({ message: 'Channel deleted' });
+      return c.json({ message: 'Channel berhasil dihapus' });
     }
   } catch (error) {
     logError(error, { context: 'Delete channel' });
-    return c.json({ error: 'Failed to delete channel' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -264,7 +279,7 @@ channels.get('/:channelId/stocks', authMiddleware, async (c) => {
     return c.json(filtered);
   } catch (error) {
     logError(error, { context: 'Fetch channel stocks' });
-    return c.json({ error: 'Failed to fetch channel stocks' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -273,16 +288,19 @@ channels.post('/:channelId/stocks', authMiddleware, ownerOrManager, async (c) =>
   try {
     const channelId = c.req.param('channelId');
     const body = await c.req.json();
-    const { variantId, allocatedQty } = body;
-
-    if (!variantId || allocatedQty === undefined) {
-      return c.json({ error: 'variantId and allocatedQty are required' }, 400);
+    
+    // Zod validation
+    const validation = validate(channelStockAllocationSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
+    
+    const { variantId, allocatedQty } = validation.data;
 
     // Check channel exists
     const channel = await prisma.salesChannel.findUnique({ where: { id: channelId } });
     if (!channel) {
-      return c.json({ error: 'Channel not found' }, 404);
+      return c.json({ error: ERR.CHANNEL_NOT_FOUND }, 404);
     }
 
     // Upsert channel stock
@@ -313,7 +331,7 @@ channels.post('/:channelId/stocks', authMiddleware, ownerOrManager, async (c) =>
     return c.json(channelStock);
   } catch (error) {
     logError(error, { context: 'Allocate channel stock' });
-    return c.json({ error: 'Failed to allocate channel stock' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -349,7 +367,7 @@ channels.put('/:channelId/stocks/:variantId', authMiddleware, ownerOrManager, as
     return c.json(updated);
   } catch (error) {
     logError(error, { context: 'Update channel stock' });
-    return c.json({ error: 'Failed to update channel stock' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -361,7 +379,7 @@ channels.post('/:channelId/stocks/bulk', authMiddleware, ownerOrManager, async (
     const { allocations } = body; // [{ variantId, allocatedQty }, ...]
 
     if (!allocations || !Array.isArray(allocations)) {
-      return c.json({ error: 'allocations array is required' }, 400);
+      return c.json({ error: ERR.REQUIRED_FIELDS }, 400);
     }
 
     const results = await prisma.$transaction(
@@ -383,10 +401,10 @@ channels.post('/:channelId/stocks/bulk', authMiddleware, ownerOrManager, async (
       )
     );
 
-    return c.json({ message: `${results.length} stocks allocated`, data: results });
+    return c.json({ message: `${results.length} stok berhasil dialokasikan`, data: results });
   } catch (error) {
     logError(error, { context: 'Bulk allocate stocks' });
-    return c.json({ error: 'Failed to bulk allocate stocks' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 

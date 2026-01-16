@@ -74,6 +74,8 @@ model ChannelStock {
   updatedAt        DateTime       @updatedAt
 
   @@unique([channelId, productVariantId])
+  @@index([channelId])
+  @@index([productVariantId])
   @@map("channel_stocks")
 }
 
@@ -148,6 +150,9 @@ model User {
   recordedCashTransactions CashTransaction[]
 
   @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([cabangId])
+  @@index([tenantId, isActive])
   @@map("users")
 }
 
@@ -190,6 +195,10 @@ model Return {
   exchangeItems    ExchangeItem[]
   cashTransactions CashTransaction[]
 
+  @@index([cabangId])
+  @@index([cabangId, createdAt])
+  @@index([transactionId])
+  @@index([status])
   @@map("returns")
 }
 
@@ -372,6 +381,8 @@ model ProductVariant {
   stockAlerts        StockAlert[]
 
   @@unique([productId, variantName, variantValue])
+  @@index([productId])
+  @@index([sku])
   @@map("product_variants")
 }
 
@@ -390,6 +401,8 @@ model Stock {
   adjustments StockAdjustment[]
 
   @@unique([productVariantId, cabangId])
+  @@index([cabangId])
+  @@index([productVariantId])
   @@map("stocks")
 }
 
@@ -411,6 +424,9 @@ model StockAdjustment {
   notes            String? // Custom reason
   createdAt        DateTime            @default(now())
 
+  @@index([cabangId])
+  @@index([cabangId, createdAt])
+  @@index([stockId])
   @@map("stock_adjustments")
 }
 
@@ -637,6 +653,10 @@ model Order {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
+  @@index([cabangId])
+  @@index([status])
+  @@index([cabangId, status])
+  @@index([requestedById])
   @@map("orders")
 }
 
@@ -664,6 +684,11 @@ model StockTransfer {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
+  @@index([fromCabangId])
+  @@index([toCabangId])
+  @@index([variantId])
+  @@index([status])
+  @@index([createdAt])
   @@map("stock_transfers")
 }
 

@@ -5,9 +5,10 @@ import crypto from 'crypto';
 import prisma from '../lib/prisma.js';
 import { generateToken } from '../lib/jwt.js';
 import { authMiddleware, ownerOnly } from '../middleware/auth.js';
-import { strictRateLimiter, loginRateLimiter, incrementFailedLogin, resetLoginRateLimit } from '../middleware/rate-limit.js';
+import { rateLimiter, strictRateLimiter, loginRateLimiter, incrementFailedLogin, resetLoginRateLimit } from '../middleware/rate-limit.js';
 import logger, { logAuth, logError } from '../lib/logger.js';
-import { validate, loginSchema, registerSchema } from '../lib/validators.js';
+import { validate, loginSchema, registerSchema, createUserSchema, updateUserSchema } from '../lib/validators.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 const auth = new Hono();
 
@@ -177,8 +178,8 @@ auth.post('/login', loginRateLimiter({ max: isDev ? 100 : 10 }), async (c) => {
     const token = generateToken(user.id, user.email, user.role, user.cabangId, user.tenantId, csrfToken);
     const { password: _, ...userWithoutPassword } = user;
 
-    // Get storeName from printer settings
-    let storeName = 'Harapan Abah'; // default
+    // Get storeName from printer settings or tenant name
+    let storeName = 'Toko Saya'; // fallback default
     if (user.cabangId) {
       const printerSettings = await prisma.printerSettings.findUnique({
         where: { cabangId: user.cabangId },
@@ -186,6 +187,16 @@ auth.post('/login', loginRateLimiter({ max: isDev ? 100 : 10 }), async (c) => {
       });
       if (printerSettings?.storeName) {
         storeName = printerSettings.storeName;
+      }
+    }
+    // Fallback to tenant name if no printer settings
+    if (storeName === 'Toko Saya' && user.tenantId) {
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: user.tenantId },
+        select: { name: true }
+      });
+      if (tenant?.name) {
+        storeName = tenant.name;
       }
     }
 
@@ -233,8 +244,8 @@ auth.get('/me', authMiddleware, async (c) => {
       return c.json({ error: 'User tidak ditemukan' }, 404);
     }
 
-    // Get storeName from printer settings (first cabang)
-    let storeName = 'Harapan Abah'; // default
+    // Get storeName from printer settings or tenant name
+    let storeName = 'Toko Saya'; // fallback default
     if (user.cabang?.id) {
       const printerSettings = await prisma.printerSettings.findUnique({
         where: { cabangId: user.cabang.id },
@@ -242,6 +253,19 @@ auth.get('/me', authMiddleware, async (c) => {
       });
       if (printerSettings?.storeName) {
         storeName = printerSettings.storeName;
+      }
+    }
+    // Fallback to tenant name
+    if (storeName === 'Toko Saya') {
+      const authUser = c.get('user');
+      if (authUser?.tenantId) {
+        const tenant = await prisma.tenant.findUnique({
+          where: { id: authUser.tenantId },
+          select: { name: true }
+        });
+        if (tenant?.name) {
+          storeName = tenant.name;
+        }
       }
     }
 
@@ -298,16 +322,21 @@ auth.get('/users', authMiddleware, ownerOnly, async (c) => {
 });
 
 // Create user (Owner only)
-auth.post('/users', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 10 user creations per 15 minutes
+auth.post('/users', rateLimiter({ max: 10 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const authUser = c.get('user');
     const tenantId = authUser?.tenantId;
 
-    const { email, password, name, role, cabangId, hasMultiCabangAccess } = await c.req.json();
-
-    if (!email || !password || !name || !role) {
-      return c.json({ error: 'Email, password, name, dan role wajib diisi' }, 400);
+    const body = await c.req.json();
+    
+    // Zod validation
+    const validation = validate(createUserSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
+    
+    const { email, password, name, role, cabangId, hasMultiCabangAccess } = validation.data;
 
     // Validation logic
     if (role === 'KASIR') {
@@ -369,14 +398,19 @@ auth.post('/users', authMiddleware, ownerOnly, async (c) => {
 });
 
 // Update user (Owner only)
-auth.put('/users/:id', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 20 updates per 15 minutes
+auth.put('/users/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const id = c.req.param('id');
-    const { name, role, cabangId, password, isActive, hasMultiCabangAccess } = await c.req.json();
-
-    if (!name || !role) {
-      return c.json({ error: 'Nama dan role wajib diisi' }, 400);
+    const body = await c.req.json();
+    
+    // Zod validation
+    const validation = validate(updateUserSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
+    
+    const { name, role, cabangId, password, isActive, hasMultiCabangAccess } = validation.data;
 
     const existingUser = await prisma.user.findUnique({
       where: { id }
@@ -453,7 +487,8 @@ auth.put('/users/:id', authMiddleware, ownerOnly, async (c) => {
 });
 
 // Delete user (Owner only)
-auth.delete('/users/:id', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 5 deletions per 15 minutes
+auth.delete('/users/:id', strictRateLimiter({ max: 5 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const id = c.req.param('id');
     const authUser = c.get('user');

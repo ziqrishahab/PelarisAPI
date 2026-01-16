@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, ownerOrManager, type AuthUser } from '../middleware/auth.js';
+import { rateLimiter, strictRateLimiter } from '../middleware/rate-limit.js';
 import { emitStockUpdated } from '../lib/socket.js';
 import logger, { logTransaction, logError } from '../lib/logger.js';
 import { createTransactionSchema, validate } from '../lib/validators.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 type Variables = {
   user: AuthUser;
@@ -48,7 +50,8 @@ function generateTransactionNo(): string {
 const transactions = new Hono<{ Variables: Variables }>();
 
 // Create new transaction (POS)
-transactions.post('/', authMiddleware, async (c) => {
+// Rate limited: 100 transactions per 5 minutes (high volume for POS)
+transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authMiddleware, async (c) => {
   try {
     const user = c.get('user');
     const body = await c.req.json();
@@ -85,7 +88,7 @@ transactions.post('/', authMiddleware, async (c) => {
     // Validation
     if (!cabangId) {
       return c.json({ 
-        error: 'cabangId is required. User must be assigned to a cabang or provide cabangId in request.' 
+        error: ERR.CABANG_ID_REQUIRED 
       }, 400);
     }
 
@@ -98,7 +101,7 @@ transactions.post('/', authMiddleware, async (c) => {
 
       if (!productVariantId || !quantity || !price) {
         return c.json({ 
-          error: 'Each item must have productVariantId, quantity, and price' 
+          error: ERR.REQUIRED_FIELDS 
         }, 400);
       }
 
@@ -115,7 +118,7 @@ transactions.post('/', authMiddleware, async (c) => {
 
       if (!variant) {
         return c.json({ 
-          error: `Product variant ${productVariantId} not found` 
+          error: `Varian produk ${productVariantId} tidak ditemukan` 
         }, 404);
       }
 
@@ -123,7 +126,7 @@ transactions.post('/', authMiddleware, async (c) => {
       const stock = variant.stocks[0];
       if (!stock || stock.quantity < quantity) {
         return c.json({ 
-          error: `Insufficient stock for ${variant.product.name} (${variant.variantName}: ${variant.variantValue})` 
+          error: `Stok tidak mencukupi untuk ${variant.product.name} (${variant.variantName}: ${variant.variantValue})` 
         }, 400);
       }
 
@@ -160,7 +163,7 @@ transactions.post('/', authMiddleware, async (c) => {
       const sumPayments = paymentAmount1 + paymentAmount2;
       if (Math.abs(sumPayments - total) > 0.01) {
         return c.json({ 
-          error: `Split payment amounts (${sumPayments}) must equal total (${total})` 
+          error: `Total split payment (${sumPayments}) harus sama dengan total transaksi (${total})` 
         }, 400);
       }
     }
@@ -264,13 +267,13 @@ transactions.post('/', authMiddleware, async (c) => {
     );
 
     return c.json({
-      message: 'Transaction created successfully',
+      message: MSG.TRANSACTION_CREATED,
       transaction: transaction.newTransaction
     }, 201);
 
   } catch (error) {
     logError(error, { context: 'Create transaction' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -370,7 +373,7 @@ transactions.get('/', authMiddleware, async (c) => {
     return c.json(transactionsWithReturnStatus);
   } catch (error) {
     logError(error, { context: 'Get transactions' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -410,7 +413,7 @@ transactions.get('/reports/summary', authMiddleware, ownerOrManager, async (c) =
     });
   } catch (error) {
     logError(error, { context: 'Get sales summary' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -459,7 +462,7 @@ transactions.get('/reports/sales-trend', authMiddleware, ownerOrManager, async (
     return c.json({ trend });
   } catch (error) {
     logError(error, { context: 'Get sales trend' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -528,7 +531,7 @@ transactions.get('/reports/top-products', authMiddleware, ownerOrManager, async 
     return c.json({ topProducts: productsWithDetails });
   } catch (error) {
     logError(error, { context: 'Get top products' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -576,7 +579,7 @@ transactions.get('/reports/branch-performance', authMiddleware, ownerOrManager, 
     return c.json({ branchPerformance });
   } catch (error) {
     logError(error, { context: 'Get branch performance' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -651,7 +654,7 @@ transactions.get('/reports/time-stats', authMiddleware, ownerOrManager, async (c
     });
   } catch (error) {
     logError(error, { context: 'Get time stats' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -685,23 +688,24 @@ transactions.get('/:id', authMiddleware, async (c) => {
     });
 
     if (!transaction) {
-      return c.json({ error: 'Transaction not found' }, 404);
+      return c.json({ error: ERR.TRANSACTION_NOT_FOUND }, 404);
     }
 
     // Kasir can only see transactions from their branch
     if (user.role === 'KASIR' && transaction.cabangId !== user.cabangId) {
-      return c.json({ error: 'Access denied' }, 403);
+      return c.json({ error: ERR.FORBIDDEN }, 403);
     }
 
     return c.json(transaction);
   } catch (error) {
     logError(error, { context: 'Get transaction by ID' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // Cancel transaction (Owner only - for mistakes)
-transactions.put('/:id/cancel', authMiddleware, ownerOrManager, async (c) => {
+// Rate limited: 10 cancellations per 15 minutes
+transactions.put('/:id/cancel', rateLimiter({ max: 10 }), authMiddleware, ownerOrManager, async (c) => {
   try {
     const transactionId = c.req.param('id');
 
@@ -712,11 +716,11 @@ transactions.put('/:id/cancel', authMiddleware, ownerOrManager, async (c) => {
     });
 
     if (!transaction) {
-      return c.json({ error: 'Transaction not found' }, 404);
+      return c.json({ error: ERR.TRANSACTION_NOT_FOUND }, 404);
     }
 
     if (transaction.paymentStatus === 'CANCELLED') {
-      return c.json({ error: 'Transaction already cancelled' }, 400);
+      return c.json({ error: 'Transaksi sudah dibatalkan sebelumnya' }, 400);
     }
 
     // Update transaction and restore stock in a transaction
@@ -768,12 +772,12 @@ transactions.put('/:id/cancel', authMiddleware, ownerOrManager, async (c) => {
     }
 
     return c.json({
-      message: 'Transaction cancelled and stock restored',
+      message: MSG.TRANSACTION_CANCELLED,
       transaction: updated.updatedTransaction
     });
   } catch (error) {
     logError(error, { context: 'Cancel transaction' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, ownerOnly, ownerOrManager } from '../middleware/auth.js';
+import { rateLimiter } from '../middleware/rate-limit.js';
 import { logError } from '../lib/logger.js';
 import { validate, updateAppSettingsSchema, updatePrinterSettingsSchema, updateSettingsSchema } from '../lib/validators.js';
 
@@ -43,7 +44,8 @@ settings.get('/app', authMiddleware, async (c) => {
 });
 
 // Update app settings (Owner only)
-settings.put('/app', authMiddleware, ownerOnly, async (c) => {
+// Rate limited: 10 updates per 15 minutes
+settings.put('/app', rateLimiter({ max: 10 }), authMiddleware, ownerOnly, async (c) => {
   try {
     const user = c.get('user');
     const tenantId = user.tenantId;
@@ -133,7 +135,8 @@ settings.get('/printer', authMiddleware, async (c) => {
 });
 
 // Update printer settings (Owner/Manager only)
-settings.put('/printer', authMiddleware, ownerOrManager, async (c) => {
+// Rate limited: 10 updates per 15 minutes
+settings.put('/printer', rateLimiter({ max: 10 }), authMiddleware, ownerOrManager, async (c) => {
   try {
     const body = await c.req.json();
     const validation = validate(updatePrinterSettingsSchema, body);

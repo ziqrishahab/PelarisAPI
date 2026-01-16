@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, type AuthUser } from '../middleware/auth.js';
 import { logError } from '../lib/logger.js';
+import { validate, updateTenantSchema } from '../lib/validators.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 type Variables = {
   user: AuthUser;
@@ -15,7 +17,7 @@ tenants.get('/current', authMiddleware, async (c) => {
     const user = c.get('user');
     
     if (!user.tenantId) {
-      return c.json({ error: 'User has no tenant' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
     
     // Get tenant info
@@ -32,13 +34,13 @@ tenants.get('/current', authMiddleware, async (c) => {
     });
 
     if (!tenant) {
-      return c.json({ error: 'Tenant not found' }, 404);
+      return c.json({ error: ERR.NOT_FOUND }, 404);
     }
 
     return c.json(tenant);
   } catch (error) {
     logError(error, { context: 'Get current tenant' });
-    return c.json({ error: 'Failed to fetch tenant info' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -48,7 +50,7 @@ tenants.get('/:id', authMiddleware, async (c) => {
     const user = c.get('user');
     
     if (user.role !== 'OWNER') {
-      return c.json({ error: 'Unauthorized' }, 403);
+      return c.json({ error: ERR.FORBIDDEN }, 403);
     }
 
     const id = c.req.param('id');
@@ -66,13 +68,13 @@ tenants.get('/:id', authMiddleware, async (c) => {
     });
 
     if (!tenant) {
-      return c.json({ error: 'Tenant not found' }, 404);
+      return c.json({ error: ERR.NOT_FOUND }, 404);
     }
 
     return c.json(tenant);
   } catch (error) {
     logError(error, { context: 'Get tenant by ID' });
-    return c.json({ error: 'Failed to fetch tenant' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -82,15 +84,22 @@ tenants.patch('/current', authMiddleware, async (c) => {
     const user = c.get('user');
     
     if (user.role !== 'OWNER') {
-      return c.json({ error: 'Unauthorized - Owner only' }, 403);
+      return c.json({ error: ERR.FORBIDDEN }, 403);
+    }
+
+    if (!user.tenantId) {
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const body = await c.req.json();
-    const { name, slug } = body;
-
-    if (!user.tenantId) {
-      return c.json({ error: 'User has no tenant' }, 400);
+    
+    // Zod validation
+    const validation = validate(updateTenantSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
+    
+    const { name, slug } = validation.data;
 
     const updatedTenant = await prisma.tenant.update({
       where: { id: user.tenantId },
@@ -100,10 +109,10 @@ tenants.patch('/current', authMiddleware, async (c) => {
       }
     });
 
-    return c.json(updatedTenant);
+    return c.json({ message: MSG.UPDATED, data: updatedTenant });
   } catch (error) {
     logError(error, { context: 'Update tenant' });
-    return c.json({ error: 'Failed to update tenant' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 

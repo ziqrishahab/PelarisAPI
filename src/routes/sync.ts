@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { strictRateLimiter } from '../middleware/rate-limit.js';
 import { logError } from '../lib/logger.js';
+import { validate, batchTransactionSyncSchema, deltaSyncSchema } from '../lib/validators.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 const sync = new Hono();
 
@@ -19,8 +22,10 @@ sync.get('/products/delta', authMiddleware, async (c) => {
   try {
     const updatedAfter = c.req.query('updatedAfter');
 
-    if (!updatedAfter) {
-      return c.json({ error: 'updatedAfter parameter is required' }, 400);
+    // Validate query param
+    const validation = validate(deltaSyncSchema, { updatedAfter });
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
 
     const products = await prisma.product.findMany({
@@ -62,19 +67,23 @@ sync.get('/products/delta', authMiddleware, async (c) => {
     });
   } catch (error) {
     logError(error, { context: 'Delta sync' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
 // Batch transaction sync - Accept multiple transactions at once
-sync.post('/transactions/batch', authMiddleware, async (c) => {
+// Rate limited: 10 batch syncs per 15 minutes (heavy operation)
+sync.post('/transactions/batch', strictRateLimiter({ max: 10 }), authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
-    const { transactions } = body;
-
-    if (!transactions || !Array.isArray(transactions) || transactions.length === 0) {
-      return c.json({ error: 'transactions array is required' }, 400);
+    
+    // Zod validation
+    const validation = validate(batchTransactionSyncSchema, body);
+    if (!validation.success) {
+      return c.json({ error: validation.error }, 400);
     }
+    
+    const { transactions } = validation.data;
 
     const results: Array<{ localId: string; serverId: string; status: string }> = [];
     const errors: Array<{ transaction: unknown; error: string }> = [];
@@ -108,7 +117,7 @@ sync.post('/transactions/batch', authMiddleware, async (c) => {
         if (!cabangId || !items || items.length === 0 || !paymentMethod) {
           errors.push({
             transaction: txData,
-            error: 'Missing required fields'
+            error: ERR.REQUIRED_FIELDS
           });
           continue;
         }
@@ -235,7 +244,7 @@ sync.post('/transactions/batch', authMiddleware, async (c) => {
 
   } catch (error) {
     logError(error, { context: 'Batch transaction' });
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
