@@ -182,13 +182,12 @@ async function main() {
     where: { cabangId: cabangPusat.id },
     update: {},
     create: {
-      cabangId: cabangPusat.id,
-      storeName: 'Demo Store',
-      storeAddress: 'Jl. Utama No. 1',
-      storePhone: '081234567890',
-      footerText: 'Terima kasih telah berbelanja!',
-      showLogo: true,
-      paperWidth: 58
+      cabang: { connect: { id: cabangPusat.id } },
+      branchName: 'Cabang Pusat',
+      address: 'Jl. Utama No. 1',
+      phone: '081234567890',
+      footerText1: 'Terima kasih telah berbelanja!',
+      footerText2: 'Barang yang sudah dibeli tidak dapat ditukar/dikembalikan'
     }
   });
 
