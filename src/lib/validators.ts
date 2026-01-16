@@ -191,21 +191,21 @@ export const updateCabangSchema = z.object({
 export const createChannelSchema = z.object({
   code: z.string().min(1, 'Kode channel wajib diisi').max(20),
   name: z.string().min(1, 'Nama channel wajib diisi').max(100),
-  type: z.enum(['POS', 'MARKETPLACE', 'WEBSTORE', 'SOCIAL', 'OTHER']).optional(),
+  type: z.enum(['POS', 'MARKETPLACE', 'WEBSITE', 'SOCIAL', 'OTHER']).optional(),
   icon: z.string().optional(),
   color: z.string().optional(),
-  apiConfig: z.record(z.any()).nullable().optional(),
-  fieldMapping: z.record(z.any()).nullable().optional(),
+  apiConfig: z.record(z.string(), z.any()).nullable().optional(),
+  fieldMapping: z.record(z.string(), z.any()).nullable().optional(),
 });
 
 export const updateChannelSchema = z.object({
   name: z.string().min(1, 'Nama channel wajib diisi').max(100).optional(),
-  type: z.enum(['POS', 'MARKETPLACE', 'WEBSTORE', 'SOCIAL', 'OTHER']).optional(),
+  type: z.enum(['POS', 'MARKETPLACE', 'WEBSITE', 'SOCIAL', 'OTHER']).optional(),
   icon: z.string().optional(),
   color: z.string().optional(),
   isActive: z.boolean().optional(),
-  apiConfig: z.record(z.any()).nullable().optional(),
-  fieldMapping: z.record(z.any()).nullable().optional(),
+  apiConfig: z.record(z.string(), z.any()).nullable().optional(),
+  fieldMapping: z.record(z.string(), z.any()).nullable().optional(),
 });
 
 export const channelStockAllocationSchema = z.object({
@@ -240,6 +240,11 @@ export const createTenantSchema = z.object({
   slug: z.string().min(1, 'Slug wajib diisi').max(50).regex(/^[a-z0-9-]+$/, 'Slug hanya boleh huruf kecil, angka, dan strip'),
 });
 
+export const updateTenantSchema = z.object({
+  name: z.string().min(1, 'Nama tenant wajib diisi').max(100).optional(),
+  slug: z.string().min(1, 'Slug wajib diisi').max(50).regex(/^[a-z0-9-]+$/, 'Slug hanya boleh huruf kecil, angka, dan strip').optional(),
+});
+
 // ==================== RETURN APPROVAL SCHEMAS ====================
 
 export const approveReturnSchema = z.object({
@@ -259,6 +264,48 @@ export const restoreBackupSchema = z.object({
 
 export const toggleAutoBackupSchema = z.object({
   enabled: z.boolean(),
+});
+
+// ==================== SYNC SCHEMAS ====================
+
+export const deltaSyncSchema = z.object({
+  updatedAfter: z.string().min(1, 'updatedAfter wajib diisi'),
+});
+
+const syncTransactionItemSchema = z.object({
+  productVariantId: z.string(),
+  productName: z.string(),
+  variantInfo: z.string().optional(),
+  sku: z.string().optional(),
+  quantity: z.number().int().positive(),
+  price: z.number().nonnegative(),
+});
+
+const syncTransactionSchema = z.object({
+  id: z.string().optional(),
+  transactionNo: z.string().optional(),
+  cabangId: z.string().min(1),
+  kasirId: z.string().optional(),
+  kasirName: z.string().optional(),
+  customerName: z.string().optional(),
+  customerPhone: z.string().optional(),
+  items: z.array(syncTransactionItemSchema).min(1, 'Minimal 1 item diperlukan'),
+  discount: z.number().nonnegative().optional(),
+  paymentMethod: z.enum(['CASH', 'DEBIT', 'TRANSFER', 'QRIS']),
+  bankName: z.string().optional(),
+  referenceNo: z.string().optional(),
+  isSplitPayment: z.boolean().optional(),
+  paymentAmount1: z.number().optional(),
+  paymentMethod2: z.enum(['CASH', 'DEBIT', 'TRANSFER', 'QRIS']).optional(),
+  paymentAmount2: z.number().optional(),
+  bankName2: z.string().optional(),
+  referenceNo2: z.string().optional(),
+  notes: z.string().optional(),
+  createdAt: z.string().optional(),
+});
+
+export const batchTransactionSyncSchema = z.object({
+  transactions: z.array(syncTransactionSchema).min(1, 'Minimal 1 transaksi diperlukan'),
 });
 
 // ==================== SETTINGS SCHEMAS ====================
@@ -327,6 +374,7 @@ export type ChannelStockAllocationInput = z.infer<typeof channelStockAllocationS
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 export type CreateTenantInput = z.infer<typeof createTenantSchema>;
+export type UpdateTenantInput = z.infer<typeof updateTenantSchema>;
 export type ApproveReturnInput = z.infer<typeof approveReturnSchema>;
 export type RejectReturnInput = z.infer<typeof rejectReturnSchema>;
 export type RestoreBackupInput = z.infer<typeof restoreBackupSchema>;

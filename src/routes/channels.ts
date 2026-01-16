@@ -1,4 +1,5 @@
 ﻿import { Hono } from 'hono';
+import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma.js';
 import { authMiddleware, ownerOnly, ownerOrManager } from '../middleware/auth.js';
 import { rateLimiter, strictRateLimiter } from '../middleware/rate-limit.js';
@@ -142,8 +143,8 @@ channels.post('/', rateLimiter({ max: 10 }), authMiddleware, ownerOrManager, asy
         type: type || 'MARKETPLACE',
         icon,
         color,
-        apiConfig: apiConfig || null,
-        fieldMapping: fieldMapping || null,
+        apiConfig: apiConfig ?? Prisma.JsonNull,
+        fieldMapping: fieldMapping ?? Prisma.JsonNull,
         isBuiltIn: false
       }
     });
@@ -176,19 +177,17 @@ channels.put('/:id', authMiddleware, ownerOrManager, async (c) => {
     }
 
     // Cannot modify built-in channel's code
-    const updateData = {
-      name: name || channel.name,
-      type: type || channel.type,
-      icon: icon !== undefined ? icon : channel.icon,
-      color: color !== undefined ? color : channel.color,
-      isActive: isActive !== undefined ? isActive : channel.isActive,
-      apiConfig: apiConfig !== undefined ? apiConfig : channel.apiConfig,
-      fieldMapping: fieldMapping !== undefined ? fieldMapping : channel.fieldMapping
-    };
-
     const updated = await prisma.salesChannel.update({
       where: { id },
-      data: updateData
+      data: {
+        name: name ?? channel.name,
+        type: type ?? channel.type,
+        icon: icon !== undefined ? icon : channel.icon,
+        color: color !== undefined ? color : channel.color,
+        isActive: isActive !== undefined ? isActive : channel.isActive,
+        apiConfig: apiConfig !== undefined ? (apiConfig ?? Prisma.JsonNull) : undefined,
+        fieldMapping: fieldMapping !== undefined ? (fieldMapping ?? Prisma.JsonNull) : undefined
+      }
     });
 
     return c.json(updated);

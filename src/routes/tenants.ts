@@ -99,7 +99,7 @@ tenants.patch('/current', authMiddleware, async (c) => {
       return c.json({ error: validation.error }, 400);
     }
     
-    const { name, slug } = validation.data;
+    const { name, slug } = validation.data as { name?: string; slug?: string };
 
     const updatedTenant = await prisma.tenant.update({
       where: { id: user.tenantId },

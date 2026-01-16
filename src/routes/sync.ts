@@ -28,10 +28,12 @@ sync.get('/products/delta', authMiddleware, async (c) => {
       return c.json({ error: validation.error }, 400);
     }
 
+    const validatedData = validation.data as { updatedAfter: string };
+
     const products = await prisma.product.findMany({
       where: {
         updatedAt: {
-          gt: new Date(updatedAfter)
+          gt: new Date(validatedData.updatedAfter)
         }
       },
       include: {
@@ -83,7 +85,36 @@ sync.post('/transactions/batch', strictRateLimiter({ max: 10 }), authMiddleware,
       return c.json({ error: validation.error }, 400);
     }
     
-    const { transactions } = validation.data;
+    const validatedBody = validation.data as { transactions: Array<{
+      id?: string;
+      transactionNo?: string;
+      cabangId: string;
+      kasirId?: string;
+      kasirName?: string;
+      customerName?: string;
+      customerPhone?: string;
+      items: Array<{
+        productVariantId: string;
+        productName: string;
+        variantInfo?: string;
+        sku?: string;
+        quantity: number;
+        price: number;
+      }>;
+      discount?: number;
+      paymentMethod: 'CASH' | 'DEBIT' | 'TRANSFER' | 'QRIS';
+      bankName?: string;
+      referenceNo?: string;
+      isSplitPayment?: boolean;
+      paymentAmount1?: number;
+      paymentMethod2?: 'CASH' | 'DEBIT' | 'TRANSFER' | 'QRIS';
+      paymentAmount2?: number;
+      bankName2?: string;
+      referenceNo2?: string;
+      notes?: string;
+      createdAt?: string;
+    }> };
+    const { transactions } = validatedBody;
 
     const results: Array<{ localId: string; serverId: string; status: string }> = [];
     const errors: Array<{ transaction: unknown; error: string }> = [];
@@ -182,7 +213,7 @@ sync.post('/transactions/batch', strictRateLimiter({ max: 10 }), authMiddleware,
                 transactionId: newTransaction.id,
                 productVariantId: item.productVariantId,
                 productName: item.productName,
-                variantInfo: item.variantInfo,
+                variantInfo: item.variantInfo || '',
                 sku: item.sku,
                 quantity: item.quantity,
                 price: item.price,
@@ -221,7 +252,7 @@ sync.post('/transactions/batch', strictRateLimiter({ max: 10 }), authMiddleware,
         });
 
         results.push({
-          localId: txData.id,
+          localId: txData.id || transaction.id,
           serverId: transaction.id,
           status: 'success'
         });
