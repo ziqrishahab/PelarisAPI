@@ -9,6 +9,7 @@ import { rateLimiter, strictRateLimiter, loginRateLimiter, incrementFailedLogin,
 import logger, { logAuth, logError } from '../lib/logger.js';
 import { validate, loginSchema, registerSchema, createUserSchema, updateUserSchema } from '../lib/validators.js';
 import { ERR, MSG } from '../lib/messages.js';
+import { createAuditLog } from '../lib/audit.js';
 
 const auth = new Hono();
 
@@ -41,7 +42,7 @@ auth.post('/register', strictRateLimiter({ max: isDev ? 50 : 5 }), async (c) => 
       return c.json({ error: 'Email sudah terdaftar' }, 400);
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 12); // Increased from 10 to 12 for better security
 
     // Use transaction for atomic user + cabang + printer settings creation
     const result = await prisma.$transaction(async (tx) => {
@@ -364,7 +365,7 @@ auth.post('/users', rateLimiter({ max: 10 }), authMiddleware, ownerOnly, async (
       return c.json({ error: 'Email sudah terdaftar' }, 400);
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 12); // Increased from 10 to 12 for better security
 
     const user = await prisma.user.create({
       data: {
@@ -459,7 +460,7 @@ auth.put('/users/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOnly, asyn
     }
 
     if (password && password.trim() !== '') {
-      updateData.password = await bcrypt.hash(password, 10);
+      updateData.password = await bcrypt.hash(password, 12); // Increased from 10 to 12 for better security
     }
 
     const user = await prisma.user.update({
@@ -519,6 +520,19 @@ auth.delete('/users/:id', strictRateLimiter({ max: 5 }), authMiddleware, ownerOn
         data: { isActive: false }
       });
 
+      // Audit log for soft delete
+      void createAuditLog({
+        action: 'USER_SOFT_DELETED',
+        entityType: 'User',
+        entityId: id,
+        description: `User ${user.name} (${user.email}) deactivated due to transaction history`,
+        metadata: { 
+          transactionCount: user._count.transactions,
+          returnCount: user._count.processedReturns 
+        },
+        context: { user: authUser }
+      });
+
       return c.json({
         message: 'User memiliki riwayat transaksi. User telah dinonaktifkan.',
         action: 'deactivated'
@@ -527,6 +541,15 @@ auth.delete('/users/:id', strictRateLimiter({ max: 5 }), authMiddleware, ownerOn
 
     await prisma.user.delete({
       where: { id }
+    });
+
+    // Audit log for hard delete
+    void createAuditLog({
+      action: 'USER_DELETED',
+      entityType: 'User',
+      entityId: id,
+      description: `User ${user.name} (${user.email}) permanently deleted`,
+      context: { user: authUser }
     });
 
     return c.json({ message: 'User berhasil dihapus', action: 'deleted' });

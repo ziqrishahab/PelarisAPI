@@ -1644,4 +1644,219 @@ products.post('/import', strictRateLimiter({ max: 3 }), authMiddleware, ownerOrM
   }
 });
 
+// Bulk delete products
+products.post('/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
+  try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
+    }
+
+    const body = await c.req.json();
+    const { productIds } = body as { productIds: string[] };
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return c.json({ error: 'Product IDs harus berupa array dan tidak boleh kosong' }, 400);
+    }
+
+    // Limit bulk delete to 100 products at a time
+    if (productIds.length > 100) {
+      return c.json({ error: 'Maksimal 100 produk per bulk delete' }, 400);
+    }
+
+    // Verify all products belong to tenant
+    const products = await prisma.product.findMany({
+      where: {
+        id: { in: productIds },
+        tenantId
+      },
+      include: {
+        variants: {
+          include: {
+            transactionItems: { take: 1 }
+          }
+        }
+      }
+    });
+
+    if (products.length !== productIds.length) {
+      return c.json({ 
+        error: 'Beberapa produk tidak ditemukan atau bukan milik tenant Anda' 
+      }, 404);
+    }
+
+    // Separate products with and without transactions
+    const productsWithTransactions: string[] = [];
+    const productsToDelete: string[] = [];
+
+    for (const product of products) {
+      const hasTransactions = product.variants.some(v => v.transactionItems.length > 0);
+      if (hasTransactions) {
+        productsWithTransactions.push(product.id);
+      } else {
+        productsToDelete.push(product.id);
+      }
+    }
+
+    // Delete products without transactions
+    let deletedCount = 0;
+    if (productsToDelete.length > 0) {
+      const result = await prisma.product.deleteMany({
+        where: {
+          id: { in: productsToDelete },
+          tenantId
+        }
+      });
+      deletedCount = result.count;
+    }
+
+    // Deactivate products with transactions
+    let deactivatedCount = 0;
+    if (productsWithTransactions.length > 0) {
+      const result = await prisma.product.updateMany({
+        where: {
+          id: { in: productsWithTransactions },
+          tenantId
+        },
+        data: { isActive: false }
+      });
+      deactivatedCount = result.count;
+    }
+
+    // Emit socket events for each product
+    productsToDelete.forEach(id => emitProductDeleted(id));
+    
+    logger.info('Bulk delete products', {
+      tenantId,
+      total: productIds.length,
+      deleted: deletedCount,
+      deactivated: deactivatedCount,
+    });
+
+    return c.json({
+      message: 'Bulk delete completed',
+      total: productIds.length,
+      deleted: deletedCount,
+      deactivated: deactivatedCount,
+      details: {
+        deletedIds: productsToDelete,
+        deactivatedIds: productsWithTransactions,
+      }
+    });
+  } catch (error: any) {
+    logError(error, { context: 'Bulk delete products' });
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
+  }
+});
+
+// Bulk delete categories
+products.post('/categories/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
+  try {
+    const user = c.get('user');
+    const tenantId = user.tenantId;
+    
+    if (!tenantId) {
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
+    }
+
+    const body = await c.req.json();
+    const { categoryIds } = body as { categoryIds: string[] };
+
+    if (!Array.isArray(categoryIds) || categoryIds.length === 0) {
+      return c.json({ error: 'Category IDs harus berupa array dan tidak boleh kosong' }, 400);
+    }
+
+    // Limit bulk delete to 50 categories at a time
+    if (categoryIds.length > 50) {
+      return c.json({ error: 'Maksimal 50 kategori per bulk delete' }, 400);
+    }
+
+    // Verify all categories belong to tenant
+    const categories = await prisma.category.findMany({
+      where: {
+        id: { in: categoryIds },
+        tenantId
+      }
+    });
+
+    if (categories.length !== categoryIds.length) {
+      return c.json({ 
+        error: 'Beberapa kategori tidak ditemukan atau bukan milik tenant Anda' 
+      }, 404);
+    }
+
+    // Use transaction for atomic bulk deletion
+    const { deletedCount, productsDeleted } = await prisma.$transaction(async (tx) => {
+      // Get all products in these categories
+      const categoryProducts = await tx.product.findMany({
+        where: { 
+          categoryId: { in: categoryIds },
+          tenantId 
+        },
+        include: { variants: true }
+      });
+
+      let totalProductsDeleted = 0;
+
+      if (categoryProducts.length > 0) {
+        const variantIds = categoryProducts.flatMap(p => p.variants.map(v => v.id));
+
+        if (variantIds.length > 0) {
+          // Delete stock adjustments
+          await tx.stockAdjustment.deleteMany({
+            where: { productVariantId: { in: variantIds } }
+          });
+
+          // Delete variants
+          await tx.productVariant.deleteMany({
+            where: { id: { in: variantIds } }
+          });
+        }
+
+        // Delete products
+        const productsResult = await tx.product.deleteMany({
+          where: { categoryId: { in: categoryIds } }
+        });
+        totalProductsDeleted = productsResult.count;
+      }
+
+      // Delete categories
+      const categoriesResult = await tx.category.deleteMany({
+        where: { 
+          id: { in: categoryIds },
+          tenantId 
+        }
+      });
+
+      return {
+        deletedCount: categoriesResult.count,
+        productsDeleted: totalProductsDeleted
+      };
+    });
+
+    // Clear category cache
+    const { clearCategoryCache } = await import('../lib/cache.js');
+    for (const id of categoryIds) {
+      await clearCategoryCache(tenantId, id);
+    }
+
+    logger.info('Bulk delete categories', {
+      tenantId,
+      categoriesDeleted: deletedCount,
+      productsDeleted,
+    });
+
+    return c.json({ 
+      message: 'Bulk delete categories completed',
+      categoriesDeleted: deletedCount,
+      productsDeleted,
+    });
+  } catch (error: any) {
+    logError(error, { context: 'Bulk delete categories' });
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
+  }
+});
+
 export default products;

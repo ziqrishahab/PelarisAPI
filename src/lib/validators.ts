@@ -2,6 +2,13 @@ import { z } from 'zod';
 
 // ==================== AUTH SCHEMAS ====================
 
+// Password validation with strength requirements
+const strongPasswordSchema = z.string()
+  .min(8, 'Password minimal 8 karakter')
+  .regex(/[a-z]/, 'Password harus mengandung huruf kecil')
+  .regex(/[A-Z]/, 'Password harus mengandung huruf besar')
+  .regex(/[0-9]/, 'Password harus mengandung angka');
+
 export const loginSchema = z.object({
   email: z.string().email('Format email tidak valid'),
   password: z.string().min(1, 'Password wajib diisi'),
@@ -9,7 +16,7 @@ export const loginSchema = z.object({
 
 export const registerSchema = z.object({
   email: z.string().email('Format email tidak valid'),
-  password: z.string().min(6, 'Password minimal 6 karakter'),
+  password: strongPasswordSchema,
   name: z.string().min(1, 'Nama wajib diisi'),
   role: z.enum(['OWNER', 'MANAGER', 'ADMIN', 'KASIR']).optional(),
   cabangId: z.string().optional(),
@@ -217,7 +224,7 @@ export const channelStockAllocationSchema = z.object({
 
 export const createUserSchema = z.object({
   email: z.string().email('Format email tidak valid'),
-  password: z.string().min(6, 'Password minimal 6 karakter'),
+  password: strongPasswordSchema,
   name: z.string().min(1, 'Nama wajib diisi'),
   role: z.enum(['OWNER', 'MANAGER', 'ADMIN', 'KASIR']),
   cabangId: z.string().optional(),
@@ -228,7 +235,7 @@ export const updateUserSchema = z.object({
   name: z.string().min(1, 'Nama wajib diisi'),
   role: z.enum(['OWNER', 'MANAGER', 'ADMIN', 'KASIR']),
   cabangId: z.string().optional(),
-  password: z.string().min(6).optional(),
+  password: strongPasswordSchema.optional(),
   isActive: z.boolean().optional(),
   hasMultiCabangAccess: z.boolean().optional(),
 });

@@ -1,244 +1,558 @@
-# Pelaris.id Backend
+# Backend API - Pelaris.id
 
-[![Hono](https://img.shields.io/badge/Hono-4.11-E36002?logo=hono)](https://hono.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript)](https://www.typescriptlang.org/)
-[![Prisma](https://img.shields.io/badge/Prisma-6.19-2D3748?logo=prisma)](https://www.prisma.io/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169e1?logo=postgresql)](https://postgresql.org/)
-[![Socket.io](https://img.shields.io/badge/Socket.io-4.8-010101?logo=socket.io)](https://socket.io/)
+> REST API Server untuk Pelaris.id Omnichannel POS System
 
-REST API untuk Pelaris.id - Omnichannel POS System.
+---
 
-**Repository:** [https://github.com/rejaldev/Pelaris.id-api](https://github.com/rejaldev/Pelaris.id-api)
+## Daftar Isi
 
-## Features
+- [Overview](#overview)
+- [Tech Stack](#tech-stack)
+- [Setup Development](#setup-development)
+- [Database](#database)
+- [API Documentation](#api-documentation)
+- [Architecture](#architecture)
+- [Testing](#testing)
 
-- **Multi-Tenant Architecture** - Complete tenant isolation (products, categories, users, cabangs)
-- **Multi-Cabang Access Control** - Configurable access for ADMIN/MANAGER (all cabangs or specific cabang)
-- Multi-cabang stock management
-- Real-time sync dengan Socket.io
-- Excel import/export produk (base64 encoded)
-- Stock alerts per variant
-- Split payment transactions
-- Returns & Exchanges management
-- Cash transaction tracking
-- Auto backup dengan scheduler (daily at 00:00 WIB)
-- Backup retention policy (7 days)
-- Database restore with transaction rollback
-- Winston logger untuk semua error handling
-- JWT authentication dengan RBAC (includes tenantId)
-- CSRF protection dengan token validation
-- Smart rate limiting (only counts failed login attempts)
-- Audit logging untuk critical actions
+---
 
-## Quick Start
+## Overview
 
-```bash
-# Install
-npm install
+Backend API dibangun dengan Hono framework yang sangat lightweight dan fast. Menggunakan PostgreSQL untuk database dengan Prisma ORM, Redis untuk caching, dan Socket.io untuk real-time synchronization.
 
-# Setup database
-cp .env.example .env
-npx prisma generate
-npx prisma migrate dev
+**Key Features:**
+- RESTful API dengan JSON response
+- JWT Authentication + RBAC (Role-Based Access Control)
+- Multi-tenant architecture dengan tenant isolation
+- Real-time sync via WebSocket (Socket.io)
+- Database connection pooling (max 10 connections)
+- Redis caching untuk performance
+- Auto backup database harian (00:00 WIB)
+- Comprehensive error logging (Winston)
+- Rate limiting & CSRF protection
+- API versioning (/api/v1/*)
 
-# Seed data (optional)
-npx prisma db seed
-
-# Development
-npm run dev
-```
-
-Server: http://localhost:5100
-
-Multi-Tenant Architecture
---------------------------
-
-- **Tenant Model**: All data is scoped by `tenantId` (users, cabangs, products, categories, transactions, etc.)
-- **JWT Token**: Includes `tenantId` in payload for automatic tenant scoping
-- **Product & Category Isolation**: Products and categories are per-tenant (not global)
-- **User Management**: Only OWNER can create/manage users within their tenant
-- **Register Flow**: Public registration creates a new tenant automatically
-
-Multi-Cabang Access Control
----------------------------
-
-- **OWNER**: Always has access to all cabangs (`hasMultiCabangAccess = true`, enforced)
-- **ADMIN/MANAGER**: Configurable by Owner:
-  - Single cabang: `hasMultiCabangAccess = false`, `cabangId` set
-  - All cabangs: `hasMultiCabangAccess = true`, `cabangId = null`
-- **KASIR**: Always tied to single cabang (`hasMultiCabangAccess = false`, enforced)
-- Only OWNER can set `hasMultiCabangAccess` via user management endpoints
-
-Database and migration notes
-----------------------------
-
-- The project uses Prisma for schema migrations. If you change `prisma/schema.prisma`, create a migration with:
-
-```bash
-npx prisma migrate dev --name <name>
-```
-
-- To reset the local database (this will destroy data):
-
-```bash
-npx prisma migrate reset --force
-npx prisma db seed
-```
-
-- If you encounter authentication errors with Prisma (P1000), verify `DATABASE_URL` in `.env` and ensure the PostgreSQL server is running and reachable. On local Windows installs the service is typically `postgresql-x64-18` and data files are under `C:\Program Files\PostgreSQL\18`.
-
-Start the server for production
------------------------------
-
-```bash
-# build
-npm run build
-
-# start
-npm start
-```
+---
 
 ## Tech Stack
 
 | Technology | Version | Purpose |
-|------------|---------|---------|
-| Hono | 4.11 | Web Framework |
-| Prisma | 6.19 | Database ORM |
-| PostgreSQL | 18 | Database |
-| Socket.io | 4.8 | Real-time |
-| XLSX | 0.18 | Excel processing |
-| JWT | 9.0 | Authentication || Winston | 3.19 | Logging |
-| node-cron | 3.0 | Backup scheduler || Vitest | 4.x | Unit testing |
+|-----------|---------|---------|
+| **Node.js** | 22.x | Runtime environment |
+| **Hono** | 4.11 | Web framework (lightweight, fast) |
+| **TypeScript** | 5.9 | Type-safe development |
+| **Prisma** | 6.19 | ORM & database migrations |
+| **PostgreSQL** | 16 | Primary database |
+| **Redis** | 7 | Caching layer |
+| **Socket.io** | 4.8 | Real-time WebSocket |
+| **bcryptjs** | Latest | Password hashing |
+| **jsonwebtoken** | Latest | JWT authentication |
+| **Winston** | Latest | Logging |
+| **ExcelJS** | Latest | Excel import/export |
+| **Zod** | 4.3 | Schema validation |
+| **Vitest** | 4.0 | Unit testing |
 
-## Project Structure
+---
 
-```
-src/
-├── index.ts           # Entry point
-├── routes/
-│   ├── auth.ts        # Authentication
-│   ├── products.ts    # Products & import/export
-│   ├── stock.ts       # Stock adjustments
-│   ├── transactions.ts # POS transactions
-│   ├── returns.ts     # Returns management
-│   ├── cabang.ts      # Branch management
-│   ├── backup.ts      # Backup & restore
-│   └── ...
-├── middleware/
-│   └── auth.ts        # JWT & RBAC
-└── lib/
-    ├── prisma.ts      # Database client
-    ├── socket.ts      # WebSocket setup
-    └── jwt.ts         # Token utils
+## Setup Development
 
-prisma/
-├── schema.prisma      # Database schema
-├── migrations/        # Migration history
-└── seed.cjs           # Seed data
+### 1. Prerequisites
+
+- Node.js 22.x atau lebih baru
+- PostgreSQL 16
+- Redis 7 (optional, tapi recommended)
+
+### 2. Install Dependencies
+
+```bash
+npm install
 ```
 
-## API Endpoints
+### 3. Environment Configuration
 
-| Prefix | Description |
-|--------|-------------|
-| `/api/auth` | Authentication & users |
-| `/api/products` | Products, categories, import/export |
-| `/api/stock` | Stock adjustments & alerts |
-| `/api/stock-transfers` | Inter-branch transfers |
-| `/api/transactions` | POS transactions |
-| `/api/returns` | Returns & refunds |
-| `/api/cabang` | Branch management |
-| `/api/settings` | System settings (printer, etc) |
-| `/api/backup` | Backup & restore |
+Copy file `.env.example` menjadi `.env`:
 
-## WebSocket Events
+```bash
+cp .env.example .env
+```
 
-| Event | Direction | Description |
-|-------|-----------|-------------|
-| `product:created` | Server → Client | New product added |
-| `product:updated` | Server → Client | Product modified |
-| `product:deleted` | Server → Client | Product removed |
-| `stock:updated` | Server → Client | Stock changed |
-| `refresh:needed` | Server → Client | Full refresh required |
+Edit `.env` dengan konfigurasi Anda:
+
+```env
+# Server
+NODE_ENV=development
+PORT=5100
+FRONTEND_URL=http://localhost:3100
+
+# Database (with connection pooling)
+DATABASE_URL=postgresql://postgres:password@localhost:5432/pelaris?schema=public&connection_limit=10&pool_timeout=10&statement_cache_size=500
+
+# JWT
+JWT_SECRET=your-super-secret-key-min-32-characters
+JWT_EXPIRES_IN=7d
+JWT_REFRESH_EXPIRES_IN=30d
+
+# Redis (optional tapi recommended)
+REDIS_URL=redis://localhost:6379
+REDIS_PASSWORD=
+
+# File Upload
+MAX_FILE_SIZE=10485760  # 10MB
+UPLOAD_DIR=./uploads
+
+# Backup
+BACKUP_DIR=./backups
+BACKUP_RETENTION_DAYS=7
+
+# Security
+CSRF_SECRET=your-csrf-secret-key-32-chars
+RATE_LIMIT_WINDOW_MS=900000  # 15 minutes
+RATE_LIMIT_MAX_REQUESTS=100
+
+# Logging
+LOG_LEVEL=info  # debug | info | warn | error
+```
+
+### 4. Database Setup
+
+```bash
+# Generate Prisma Client
+npx prisma generate
+
+# Run migrations
+npx prisma migrate deploy
+
+# Seed database (optional - untuk development)
+npx prisma db seed
+```
+
+### 5. Run Development Server
+
+```bash
+npm run dev
+```
+
+Server akan running di: `http://localhost:5100`
+
+---
+
+## Database
+
+### Schema Overview
+
+```prisma
+Tenant (toko/bisnis)
+  ├── Users (owner, manager, kasir)
+  ├── Cabangs (cabang toko)
+  ├── Categories
+  ├── Products
+  │   └── ProductVariants
+  │       └── StokVariants (per cabang)
+  ├── Transactions
+  │   └── TransactionItems
+  ├── Returns
+  ├── StockAdjustments
+  └── Settings
+```
+
+**Multi-Tenant Isolation:**
+- Semua data di-scope berdasarkan `tenantId`
+- User hanya bisa akses data tenant mereka
+- JWT token include `tenantId` untuk automatic scoping
+
+**Multi-Cabang Access:**
+- User dengan `hasMultiCabangAccess = true` bisa akses semua cabang
+- User regular hanya bisa akses `cabangId` mereka
+- Owner selalu punya multi-cabang access
+
+### Migrations
+
+```bash
+# Create new migration
+npx prisma migrate dev --name migration_name
+
+# Apply migrations (production)
+npx prisma migrate deploy
+
+# Reset database (DANGER - development only)
+npx prisma migrate reset
+```
+
+### Database Backup
+
+Automatic backup berjalan setiap hari jam 00:00 WIB.
+
+Manual backup:
+
+```bash
+npm run db:backup
+```
+
+Restore from backup:
+
+```bash
+npm run db:restore backup_filename.sql
+```
+
+---
+
+## API Documentation
+
+### Base URL
+
+**Development:** `http://localhost:5100/api`  
+**Production:** `https://api.pelaris.id/api`
+
+### API Versioning
+
+- **Current Version:** `/api/v1/*`
+- **Legacy (backward compatible):** `/api/*`
+
+### Authentication
+
+Semua endpoint (kecuali login/register) memerlukan JWT token di header:
+
+```http
+Authorization: Bearer <jwt_token>
+```
+
+### Endpoints
+
+#### Authentication
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/register` | Daftar tenant baru |
+| POST | `/api/auth/login` | Login user |
+| POST | `/api/auth/refresh` | Refresh JWT token |
+| POST | `/api/auth/logout` | Logout user |
+| GET | `/api/auth/me` | Get user profile |
+
+#### Products
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/products` | List products (pagination) |
+| GET | `/api/products/:id` | Get product detail |
+| POST | `/api/products` | Create product |
+| PUT | `/api/products/:id` | Update product |
+| DELETE | `/api/products/:id` | Delete product (smart delete) |
+| POST | `/api/products/bulk-delete` | Bulk delete (max 100) |
+| POST | `/api/products/import` | Import from Excel |
+| GET | `/api/products/export` | Export to Excel |
+| GET | `/api/products/template` | Download template Excel |
+
+#### Transactions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/transactions` | List transactions (pagination) |
+| GET | `/api/transactions/:id` | Get transaction detail |
+| POST | `/api/transactions` | Create transaction |
+| POST | `/api/transactions/split-payment` | Split payment transaction |
+
+#### Stock Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/stock/alerts` | Low stock alerts |
+| GET | `/api/stock/movements` | Stock movement history |
+| POST | `/api/stock/adjust` | Adjust stock |
+| POST | `/api/stock/transfer` | Transfer between branches |
+
+#### Returns
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/returns` | List returns |
+| GET | `/api/returns/:id` | Get return detail |
+| POST | `/api/returns` | Create return request |
+| PUT | `/api/returns/:id/approve` | Approve return |
+| PUT | `/api/returns/:id/reject` | Reject return |
+
+#### Categories
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/categories` | List categories |
+| POST | `/api/categories` | Create category |
+| PUT | `/api/categories/:id` | Update category |
+| DELETE | `/api/categories/:id` | Delete category |
+| POST | `/api/categories/bulk-delete` | Bulk delete (max 50) |
+
+#### Cabangs (Branches)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/cabang` | List cabangs |
+| GET | `/api/cabang/:id` | Get cabang detail |
+| POST | `/api/cabang` | Create cabang |
+| PUT | `/api/cabang/:id` | Update cabang |
+| DELETE | `/api/cabang/:id` | Delete cabang |
+
+#### Settings
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/settings` | Get all settings |
+| PUT | `/api/settings` | Update settings |
+
+#### Backup & Sync
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/backup` | Manual backup database |
+| GET | `/api/backup/list` | List backups |
+| POST | `/api/backup/restore` | Restore from backup |
+| POST | `/api/sync/trigger` | Trigger sync ke mobile |
+
+### Response Format
+
+**Success Response:**
+
+```json
+{
+  "data": { ... },
+  "message": "Success message"
+}
+```
+
+**Error Response:**
+
+```json
+{
+  "error": "Error message",
+  "code": "ERROR_CODE",
+  "details": { ... }
+}
+```
+
+**Pagination Response:**
+
+```json
+{
+  "data": [ ... ],
+  "pagination": {
+    "page": 1,
+    "limit": 50,
+    "total": 234,
+    "totalPages": 5
+  }
+}
+```
+
+---
+
+## Architecture
+
+### Folder Structure
+
+```
+backend/
+├── src/
+│   ├── index.ts              # Entry point
+│   ├── config/
+│   │   └── index.ts          # Configuration
+│   ├── lib/
+│   │   ├── prisma.ts         # Prisma client + pooling
+│   │   ├── redis.ts          # Redis client
+│   │   ├── cache.ts          # Cache utilities
+│   │   ├── jwt.ts            # JWT utilities
+│   │   ├── logger.ts         # Winston logger
+│   │   ├── sentry.ts         # Error tracking
+│   │   ├── excel.ts          # Excel helpers
+│   │   └── validators.ts     # Zod schemas
+│   ├── middleware/
+│   │   ├── auth.ts           # Authentication
+│   │   ├── rate-limit.ts     # Rate limiting
+│   │   ├── security.ts       # CSRF, CORS, etc
+│   │   ├── file-upload.ts    # File upload handling
+│   │   └── timeout.ts        # Request timeout
+│   ├── routes/
+│   │   ├── auth.ts
+│   │   ├── products.ts
+│   │   ├── transactions.ts
+│   │   ├── stock.ts
+│   │   ├── returns.ts
+│   │   ├── categories.ts
+│   │   ├── cabang.ts
+│   │   ├── settings.ts
+│   │   ├── backup.ts
+│   │   └── sync.ts
+│   └── test/                 # Unit tests
+├── prisma/
+│   ├── schema.prisma         # Database schema
+│   ├── migrations/           # Migration files
+│   ├── seed.cjs              # Seed data
+│   └── seed-products.js      # Product seed data
+├── uploads/                  # File uploads
+├── backups/                  # Database backups
+├── logs/                     # Application logs
+└── dist/                     # Compiled output
+```
+
+### Connection Pooling
+
+Prisma configured dengan connection pooling:
+
+```typescript
+{
+  connection_limit: 10,      // Max 10 connections
+  pool_timeout: 10,          // 10 seconds wait
+  statement_cache_size: 500  // Cache 500 prepared statements
+}
+```
+
+### Caching Strategy
+
+Redis digunakan untuk:
+- Product list cache (TTL: 5 minutes)
+- Category cache (TTL: 10 minutes)
+- Settings cache (TTL: 1 hour)
+
+Cache auto-invalidate saat data berubah via Socket.io events.
+
+### Real-time Sync
+
+WebSocket events:
+- `stock:updated` - Stock changed
+- `product:created` - New product
+- `product:updated` - Product modified
+- `product:deleted` - Product removed
+- `category:updated` - Category changed
+- `sync:trigger` - Manual sync request
+
+---
 
 ## Testing
 
+### Run Tests
+
 ```bash
-# Run all tests
+# All tests
 npm test
 
-# Run specific test
-npm test -- --run lib/jwt.test.ts
+# Watch mode
+npm run test:watch
+
+# Coverage
+npm run test:coverage
 ```
 
-## Build & Deploy
+### Test Structure
+
+```
+src/test/
+├── api.test.ts              # API endpoint tests
+├── auth.integration.test.ts # Auth flow tests
+├── stock.integration.test.ts # Stock management tests
+├── returns.integration.test.ts # Returns flow tests
+└── validators.test.ts       # Validation tests
+```
+
+---
+
+## Scripts
 
 ```bash
-# Build
-npm run build
+# Development
+npm run dev                  # Run dev server with watch mode
+npm run build                # Build for production
+npm start                    # Run production server
 
-# Production
-npm start
+# Database
+npm run db:push              # Push schema changes (dev only)
+npm run db:migrate           # Run migrations
+npm run db:seed              # Seed database
+npm run db:backup            # Manual backup
+npm run db:restore           # Restore from backup
 
-# PM2
-pm2 start ecosystem.config.js
+# Testing
+npm test                     # Run all tests
+npm run test:run             # Run once without watch
+npm run test:coverage        # Generate coverage report
+
+# Code Quality
+npm run typecheck            # TypeScript type checking
 ```
 
-## Environment Variables
+---
 
-```env
-DATABASE_URL=postgresql://user:pass@localhost:5432/Pelaris.id
-JWT_SECRET=your-secret-key
-PORT=5100
-```
+## Production Deployment
 
-## Database Commands
+Lihat [../DEPLOYMENT.md](../DEPLOYMENT.md) untuk panduan lengkap deployment dengan Docker & CI/CD.
+
+**Quick deployment:**
 
 ```bash
-# Generate Prisma client
+# Build Docker image
+docker build -t pelaris-backend -f Dockerfile .
+
+# Run container
+docker run -d \
+  -p 5100:5100 \
+  -e DATABASE_URL="postgresql://..." \
+  -e JWT_SECRET="..." \
+  -v $(pwd)/uploads:/app/uploads \
+  -v $(pwd)/backups:/app/backups \
+  pelaris-backend
+```
+
+---
+
+## Troubleshooting
+
+### Error: EADDRINUSE
+
+Port 5100 sudah dipakai.
+
+**Solusi:**
+```bash
+# Windows
+netstat -ano | findstr :5100
+taskkill /PID <PID> /F
+
+# Linux/Mac
+lsof -ti:5100 | xargs kill -9
+```
+
+### Error: Prisma Client not generated
+
+**Solusi:**
+```bash
 npx prisma generate
-
-# Create migration
-npx prisma migrate dev --name <name>
-
-# Reset database
-npx prisma migrate reset
-
-# View database
-npx prisma studio
+npm run build
 ```
 
-## Changelog
+### Error: Database connection failed
 
-### 2026-01-15
-**Multi-Tenant & Multi-Cabang Access:**
-- Implemented complete multi-tenant architecture with Tenant model
-- Added `hasMultiCabangAccess` field to User model for flexible access control
-- Products and Categories now tenant-scoped (per-tenant isolation)
-- JWT tokens now include `tenantId` for automatic scoping
-- All routes enforce tenant isolation (products, categories, users, cabangs)
-- Added CSRF protection with token validation
-- Fixed CORS subdomain validation logic
-- Added AuditLog model for tracking critical actions
-- Added ExchangeItem and CashTransaction models for returns/exchanges
-- Updated auth routes to support multi-cabang access configuration
-- Only OWNER can manage users and set multi-cabang access
+**Solusi:**
+1. Cek PostgreSQL running: `pg_isready`
+2. Verify DATABASE_URL di `.env`
+3. Test connection: `psql $DATABASE_URL`
 
-### 2026-01-09
-- Complete console.log cleanup (59 instances replaced with Winston logger)
-- Added backup route tests (10 tests for authentication)
-- Implemented restore backup endpoint with transaction rollback
-- Added list/download/delete backup endpoints
-- Implemented auto backup scheduler with node-cron
-- Daily auto backup at 00:00 WIB with 7-day retention
-- Fixed login rate limiter (only counts failed attempts)
-- Fixed export data download in backup settings
-- Recreated channels.ts with proper logging
+### Redis connection warning
 
-### 2026-01-07
-- Added JWT tests
-- Improved error handling
+Redis optional. Jika tidak ada, caching akan di-skip.
 
-### 2026-01-05
-- Added stock alerts per variant
-- Improved Excel import validation
+**Install Redis:**
+```bash
+# Windows: Use WSL or Docker
+docker run -d -p 6379:6379 redis:7-alpine
+
+# Ubuntu
+sudo apt install redis-server
+sudo systemctl start redis
+```
+
+---
+
+## Support
+
+- **Internal Documentation:** Lihat README di root project
+- **API Issues:** Buat issue di project tracker
+- **Emergency:** Contact DevOps team
+
+---
+
+**Last Updated:** January 2026

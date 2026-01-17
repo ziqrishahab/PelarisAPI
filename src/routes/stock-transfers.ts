@@ -6,6 +6,7 @@ import { emitStockUpdated } from '../lib/socket.js';
 import logger, { logError } from '../lib/logger.js';
 import { validate, stockTransferSchema } from '../lib/validators.js';
 import { ERR, MSG } from '../lib/messages.js';
+import { createAuditLog } from '../lib/audit.js';
 
 type Variables = {
   user: AuthUser;
@@ -143,6 +144,24 @@ stockTransfers.post('/', rateLimiter({ max: 30 }), authMiddleware, async (c) => 
       return transfer;
     });
 
+    // Audit log for stock transfer
+    void createAuditLog({
+      action: 'STOCK_TRANSFER_CREATED',
+      entityType: 'StockTransfer',
+      entityId: result.id,
+      description: `Transfer stok ${result.productVariant.product.name} dari ${result.fromCabang.name} ke ${result.toCabang.name} sejumlah ${quantity}`,
+      metadata: {
+        transferNo: result.transferNo,
+        variantId,
+        fromCabangId,
+        toCabangId,
+        quantity,
+        status: result.status,
+        autoApproved: isAutoApprove,
+      },
+      context: { user },
+    });
+
     // Emit socket event if completed
     if (isAutoApprove) {
       emitStockUpdated({
@@ -269,6 +288,22 @@ stockTransfers.patch('/:id/approve', authMiddleware, async (c) => {
       });
     });
 
+    // Audit log for approval
+    void createAuditLog({
+      action: 'STOCK_TRANSFER_APPROVED',
+      entityType: 'StockTransfer',
+      entityId: result.id,
+      description: `Transfer stok ${result.productVariant.product.name} disetujui oleh ${user.email}`,
+      metadata: {
+        transferNo: result.transferNo,
+        fromCabangId: transfer.fromCabangId,
+        toCabangId: transfer.toCabangId,
+        quantity: transfer.quantity,
+        approvedBy: user.userId,
+      },
+      context: { user },
+    });
+
     // Emit socket event
     emitStockUpdated({
       type: 'transfer',
@@ -335,6 +370,23 @@ stockTransfers.patch('/:id/reject', authMiddleware, async (c) => {
         toCabang: { select: { id: true, name: true } },
         transferredBy: { select: { id: true, name: true, email: true, role: true } }
       }
+    });
+
+    // Audit log for rejection/cancellation
+    void createAuditLog({
+      action: 'STOCK_TRANSFER_CANCELLED',
+      entityType: 'StockTransfer',
+      entityId: result.id,
+      description: `Transfer stok ${result.productVariant.product.name} dibatalkan${reason ? `: ${reason}` : ''}`,
+      metadata: {
+        transferNo: result.transferNo,
+        fromCabangId: transfer.fromCabangId,
+        toCabangId: transfer.toCabangId,
+        quantity: transfer.quantity,
+        cancelledBy: user.userId,
+        reason,
+      },
+      context: { user },
     });
 
     return c.json(result);

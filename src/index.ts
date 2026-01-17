@@ -5,6 +5,10 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import 'dotenv/config';
 
+// Validate environment variables before anything else
+import { validateEnv } from './lib/env-validator.js';
+validateEnv();
+
 // Import Sentry - must be initialized first
 import { initSentry, captureError, addBreadcrumb, setUserContext } from './lib/sentry.js';
 initSentry();
@@ -20,6 +24,8 @@ initRedis();
 // Import middleware
 import { rateLimiter, strictRateLimiter } from './middleware/rate-limit.js';
 import { security } from './middleware/security.js';
+import { timeout } from './middleware/timeout.js';
+import { requestId } from './middleware/request-id.js';
 
 // Import routes
 import auth from './routes/auth.js';
@@ -34,6 +40,7 @@ import backup from './routes/backup.js';
 import stock from './routes/stock.js';
 import channels from './routes/channels.js';
 import tenants from './routes/tenants.js';
+import health from './routes/health.js';
 
 // Import socket helper
 import { initSocket } from './lib/socket.js';
@@ -98,6 +105,12 @@ app.use('*', cors({
 // Security headers middleware - must be before other middleware
 app.use('*', security());
 
+// Request ID tracking middleware
+app.use('*', requestId());
+
+// Request timeout middleware (30 seconds)
+app.use('*', timeout(30000));
+
 // Request logging middleware
 app.use('*', async (c, next) => {
   const start = Date.now();
@@ -128,12 +141,10 @@ app.get('/', (c) => {
   return c.json({ message: 'Pelaris.id API - Omnichannel System (Hono)' });
 });
 
-// Health check
-app.get('/health', (c) => {
-  return c.json({ status: 'OK', timestamp: new Date() });
-});
+// Health check routes
+app.route('/health', health);
 
-// Full health check (DB, Redis)
+// Legacy health check endpoint (kept for backward compatibility)
 app.get('/health/full', async (c) => {
   const checks = {
     api: 'ok',
@@ -174,7 +185,21 @@ app.get('/health/full', async (c) => {
   return c.json(checks, hasError ? 503 : 200);
 });
 
-// API Routes
+// API Routes (v1)
+app.route('/api/v1/auth', auth);
+app.route('/api/v1/products', products);
+app.route('/api/v1/transactions', transactions);
+app.route('/api/v1/cabang', cabang);
+app.route('/api/v1/settings', settings);
+app.route('/api/v1/sync', sync);
+app.route('/api/v1/returns', returns);
+app.route('/api/v1/stock-transfers', stockTransfers);
+app.route('/api/v1/backup', backup);
+app.route('/api/v1/stock', stock);
+app.route('/api/v1/channels', channels);
+app.route('/api/v1/tenants', tenants);
+
+// Legacy API routes (backward compatibility - will be deprecated)
 app.route('/api/auth', auth);
 app.route('/api/products', products);
 app.route('/api/transactions', transactions);

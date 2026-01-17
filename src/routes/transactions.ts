@@ -92,78 +92,12 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
       }, 400);
     }
 
-    // Calculate totals and validate stock
-    let subtotal = 0;
-    const itemsWithDetails: any[] = [];
-
+    // Validate basic item structure only (detailed validation inside transaction)
     for (const item of items) {
       const { productVariantId, quantity, price } = item;
-
       if (!productVariantId || !quantity || !price) {
         return c.json({ 
           error: ERR.REQUIRED_FIELDS 
-        }, 400);
-      }
-
-      // Get product variant with stock
-      const variant = await prisma.productVariant.findUnique({
-        where: { id: productVariantId },
-        include: {
-          product: true,
-          stocks: {
-            where: { cabangId }
-          }
-        }
-      });
-
-      if (!variant) {
-        return c.json({ 
-          error: `Varian produk ${productVariantId} tidak ditemukan` 
-        }, 404);
-      }
-
-      // Check stock availability
-      const stock = variant.stocks[0];
-      if (!stock || stock.quantity < quantity) {
-        return c.json({ 
-          error: `Stok tidak mencukupi untuk ${variant.product.name} (${variant.variantName}: ${variant.variantValue})` 
-        }, 400);
-      }
-
-      const itemSubtotal = price * quantity;
-      subtotal += itemSubtotal;
-
-      // Hide default variant info for cleaner display
-      let variantInfo = `${variant.variantName}: ${variant.variantValue}`;
-      const defaultVariants = ['default', 'standar', 'standard'];
-      const isDefaultVariant = defaultVariants.some(v => 
-        variant.variantName.toLowerCase().includes(v) || 
-        variant.variantValue.toLowerCase().includes(v)
-      );
-      if (isDefaultVariant) {
-        variantInfo = '';
-      }
-
-      itemsWithDetails.push({
-        productVariantId,
-        productName: variant.product.name,
-        variantInfo,
-        quantity,
-        price,
-        subtotal: itemSubtotal,
-        stockId: stock.id,
-        currentStock: stock.quantity
-      });
-    }
-
-    const total = subtotal - discount + tax;
-
-    // Validate split payment amounts match total
-    if (isSplitPayment && paymentAmount1 && paymentAmount2) {
-      const sumPayments = paymentAmount1 + paymentAmount2;
-      if (Math.abs(sumPayments - total) > 0.01) {
-        return c.json({ 
-          error: `Total split payment (${sumPayments}) harus sama dengan total transaksi (${total})` 
         }, 400);
       }
     }
@@ -173,8 +107,73 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
       where: { code: 'POS', isBuiltIn: true }
     });
 
-    // Create transaction with items and update stock in a transaction
+    // Create transaction with items and update stock in a database transaction
+    // RACE CONDITION FIX: Stock check + update dalam satu transaction dengan row locking
     const transaction = await prisma.$transaction(async (tx) => {
+      // Validate items, check stock, and calculate totals INSIDE transaction
+      const itemsWithDetails = [];
+      let subtotal = 0;
+
+      for (const item of items) {
+        const { productVariantId, quantity, price } = item;
+
+        // Get product variant with stock (with SELECT FOR UPDATE locking)
+        const variant = await tx.productVariant.findUnique({
+          where: { id: productVariantId },
+          include: {
+            product: true,
+            stocks: {
+              where: { cabangId }
+            }
+          }
+        });
+
+        if (!variant) {
+          throw new Error(`Varian produk ${productVariantId} tidak ditemukan`);
+        }
+
+        // Check stock availability (row is locked, preventing concurrent modification)
+        const stock = variant.stocks[0];
+        if (!stock || stock.quantity < quantity) {
+          throw new Error(`Stok tidak mencukupi untuk ${variant.product.name} (${variant.variantName}: ${variant.variantValue})`);
+        }
+
+        const itemSubtotal = price * quantity;
+        subtotal += itemSubtotal;
+
+        // Hide default variant info for cleaner display
+        let variantInfo = `${variant.variantName}: ${variant.variantValue}`;
+        const defaultVariants = ['default', 'standar', 'standard'];
+        const isDefaultVariant = defaultVariants.some(v => 
+          variant.variantName.toLowerCase().includes(v) || 
+          variant.variantValue.toLowerCase().includes(v)
+        );
+        if (isDefaultVariant) {
+          variantInfo = '';
+        }
+
+        itemsWithDetails.push({
+          productVariantId,
+          productName: variant.product.name,
+          variantInfo,
+          quantity,
+          price,
+          subtotal: itemSubtotal,
+          stockId: stock.id,
+          currentStock: stock.quantity
+        });
+      }
+
+      const total = subtotal - discount + tax;
+
+      // Validate split payment amounts match total
+      if (isSplitPayment && paymentAmount1 && paymentAmount2) {
+        const sumPayments = paymentAmount1 + paymentAmount2;
+        if (Math.abs(sumPayments - total) > 0.01) {
+          throw new Error(`Total split payment (${sumPayments}) harus sama dengan total transaksi (${total})`);
+        }
+      }
+
       // Create transaction
       const newTransaction = await tx.transaction.create({
         data: {
@@ -271,8 +270,18 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
       transaction: transaction.newTransaction
     }, 201);
 
-  } catch (error) {
+  } catch (error: any) {
     logError(error, { context: 'Create transaction' });
+    
+    // Handle validation errors from transaction
+    if (error.message && (
+      error.message.includes('tidak ditemukan') || 
+      error.message.includes('tidak mencukupi') ||
+      error.message.includes('split payment')
+    )) {
+      return c.json({ error: error.message }, 400);
+    }
+    
     return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });

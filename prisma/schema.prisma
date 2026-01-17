@@ -34,11 +34,11 @@ enum TransactionStatus {
 // Sales Channel - configurable marketplace/channel
 model SalesChannel {
   id           String      @id @default(cuid())
-  code         String      @unique  // "POS", "TOKOPEDIA", "SHOPEE", etc
-  name         String               // Display name
+  code         String      @unique @db.VarChar(50)  // "POS", "TOKOPEDIA", "SHOPEE", etc
+  name         String      @db.VarChar(100)          // Display name
   type         ChannelType @default(MARKETPLACE)
-  icon         String?              // Icon name atau URL
-  color        String?              // Brand color hex
+  icon         String?     @db.VarChar(255)          // Icon name atau URL
+  color        String?     @db.VarChar(20)           // Brand color hex
   isActive     Boolean     @default(true)
   isBuiltIn    Boolean     @default(false) // POS = true
   
@@ -84,8 +84,8 @@ model ChannelStock {
 
 model Tenant {
   id               String    @id @default(cuid())
-  name             String    // Business/Store name (editable with restrictions)
-  slug             String    @unique // URL-friendly identifier
+  name             String    @db.VarChar(100) // Business/Store name (editable with restrictions)
+  slug             String    @unique @db.VarChar(100) // URL-friendly identifier
   isActive         Boolean   @default(true)
   lastNameChangeAt DateTime? // Track when name was last changed (for 30-day rule)
   createdAt        DateTime  @default(now())
@@ -106,12 +106,12 @@ model AuditLog {
   tenantId    String?
   cabangId    String?
   userId      String?
-  action      String   // e.g. "STOCK_ADJUSTMENT", "RETURN_APPROVED"
-  entityType  String   // e.g. "Stock", "Return", "User"
-  entityId    String   // e.g. stockAdjustmentId, returnId, userId
-  description String?  // Human readable description
+  action      String   @db.VarChar(100) // e.g. "STOCK_ADJUSTMENT", "RETURN_APPROVED"
+  entityType  String   @db.VarChar(50)  // e.g. "Stock", "Return", "User"
+  entityId    String   @db.VarChar(50)  // e.g. stockAdjustmentId, returnId, userId
+  description String?  @db.VarChar(500) // Human readable description
   metadata    Json?    // Extra data snapshot
-  ip          String?
+  ip          String?  @db.VarChar(50)
   createdAt   DateTime @default(now())
 
   @@index([tenantId, createdAt])
@@ -129,9 +129,9 @@ model User {
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId  String
   
-  email     String   @unique
-  password  String
-  name      String
+  email     String   @unique @db.VarChar(255)
+  password  String   @db.VarChar(255)
+  name      String   @db.VarChar(100)
   role      UserRole @default(KASIR)
   cabang    Cabang?  @relation(fields: [cabangId], references: [id])
   cabangId  String?
@@ -167,7 +167,7 @@ enum UserRole {
 // Return/Refund Management
 model Return {
   id              String       @id @default(cuid())
-  returnNo        String       @unique // RET-20251124-0001
+  returnNo        String       @unique @db.VarChar(50) // RET-20251124-0001
   transaction     Transaction  @relation(fields: [transactionId], references: [id])
   transactionId   String
   cabang          Cabang       @relation(fields: [cabangId], references: [id])
@@ -175,20 +175,20 @@ model Return {
   processedBy     User         @relation(fields: [processedById], references: [id])
   processedById   String
   reason          ReturnReason
-  reasonDetail    String?      // Additional details about the reason
-  notes           String?
+  reasonDetail    String?      @db.VarChar(500) // Additional details about the reason
+  notes           String?      @db.VarChar(500)
   subtotal        Float // Total nilai return
   refundMethod    PaymentMethod
   refundAmount    Float
   status          ReturnStatus @default(PENDING)
-  approvedBy      String? // Manager yang approve
+  approvedBy      String?      @db.VarChar(50) // Manager yang approve
   approvedAt      DateTime?
-  returnType      String?      // 'EXCHANGE' or 'REFUND'
+  returnType      String?      @db.VarChar(20) // 'EXCHANGE' or 'REFUND'
   priceDifference Float?       // For exchanges: difference between old and new items
   isOverdue       Boolean      @default(false)
   managerOverride Boolean      @default(false)
   photoUrls       String[]     @default([])
-  conditionNote   String?
+  conditionNote   String?      @db.VarChar(500)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -210,8 +210,8 @@ model ExchangeItem {
   returnId         String
   productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
   productVariantId String
-  productName      String // Snapshot
-  variantInfo      String // Snapshot
+  productName      String @db.VarChar(255) // Snapshot
+  variantInfo      String @db.VarChar(255) // Snapshot
   quantity         Int
   price            Float
   subtotal         Float
@@ -241,9 +241,9 @@ model ReturnItem {
   returnId         String
   productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
   productVariantId String
-  productName      String // Snapshot
-  variantInfo      String // Snapshot
-  sku              String? // Snapshot
+  productName      String  @db.VarChar(255) // Snapshot
+  variantInfo      String  @db.VarChar(255) // Snapshot
+  sku              String? @db.VarChar(100) // Snapshot
   quantity         Int // Jumlah yang diretur
   price            Float // Harga saat transaksi
   subtotal         Float // quantity * price
@@ -258,9 +258,9 @@ model Cabang {
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId  String
   
-  name        String
-  address   String?
-  phone     String?
+  name        String  @db.VarChar(100)
+  address   String?   @db.VarChar(500)
+  phone     String?   @db.VarChar(20)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -286,8 +286,8 @@ model Category {
   id          String    @id @default(cuid())
   tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId    String
-  name        String
-  description String?
+  name        String    @db.VarChar(100)
+  description String?   @db.VarChar(500)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   products    Product[]
@@ -301,8 +301,8 @@ model Product {
   id          String      @id @default(cuid())
   tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId    String
-  name        String
-  description String?
+  name        String      @db.VarChar(255)
+  description String?     @db.VarChar(1000)
   category    Category    @relation(fields: [categoryId], references: [id])
   categoryId  String
   productType ProductType @default(VARIANT) // SINGLE atau VARIANT
@@ -324,7 +324,7 @@ model VariantType {
   id        String   @id @default(cuid())
   product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   productId String
-  name      String // "Ukuran", "Warna", "Material"
+  name      String   @db.VarChar(50) // "Ukuran", "Warna", "Material"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -339,7 +339,7 @@ model VariantOption {
   id            String      @id @default(cuid())
   variantType   VariantType @relation(fields: [variantTypeId], references: [id], onDelete: Cascade)
   variantTypeId String
-  value         String // "6", "8", "10", "Merah", "Biru"
+  value         String      @db.VarChar(100) // "6", "8", "10", "Merah", "Biru"
   createdAt     DateTime    @default(now())
 
   @@unique([variantTypeId, value])
@@ -356,16 +356,16 @@ model ProductVariant {
   id           String   @id @default(cuid())
   product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   productId    String
-  variantName  String // "Size | Color | Material" (pipe-separated, supports up to 3 attributes)
-  variantValue String // "M | Red | Cotton" (pipe-separated values)
-  sku          String   @unique // SKU/Barcode
+  variantName  String   @db.VarChar(150) // "Size | Color | Material" (pipe-separated, supports up to 3 attributes)
+  variantValue String   @db.VarChar(255) // "M | Red | Cotton" (pipe-separated values)
+  sku          String   @unique @db.VarChar(100) // SKU/Barcode
   
   // Marketplace fields (optional)
   weight       Int?     // Weight in grams (for shipping calculation by marketplace)
   length       Int?     // Length in cm
   width        Int?     // Width in cm
   height       Int?     // Height in cm
-  imageUrl     String?  // External image URL (for marketplace sync)
+  imageUrl     String?  @db.VarChar(500) // External image URL (for marketplace sync)
   
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -422,7 +422,7 @@ model StockAdjustment {
   newQty           Int // Stok baru
   difference       Int // newQty - previousQty
   reason           AdjustmentReason?
-  notes            String? // Custom reason
+  notes            String? @db.VarChar(500) // Custom reason
   createdAt        DateTime            @default(now())
 
   @@index([cabangId])
@@ -457,9 +457,9 @@ model Transaction {
   kasirId        String?           // Optional - marketplace tidak perlu kasir
   
   // Customer Info
-  customerName   String?
-  customerPhone  String?
-  buyerUsername  String?           // Username pembeli di marketplace
+  customerName   String?  @db.VarChar(100)
+  customerPhone  String?  @db.VarChar(20)
+  buyerUsername  String?  @db.VarChar(100) // Username pembeli di marketplace
   
   // Amounts
   subtotal       Float
@@ -472,28 +472,28 @@ model Transaction {
   // Payment (for POS)
   paymentMethod  PaymentMethod?
   paymentStatus  PaymentStatus     @default(COMPLETED)
-  bankName       String?           // Nama bank untuk DEBIT/TRANSFER
-  referenceNo    String?           // Nomor referensi/approval
-  cardLastDigits String?           // 4 digit terakhir kartu (DEBIT)
+  bankName       String?  @db.VarChar(100)  // Nama bank untuk DEBIT/TRANSFER
+  referenceNo    String?  @db.VarChar(100)  // Nomor referensi/approval
+  cardLastDigits String?  @db.VarChar(4)    // 4 digit terakhir kartu (DEBIT)
   
   // Split Payment (POS only)
   isSplitPayment Boolean           @default(false)
   paymentAmount1 Float?
   paymentMethod2 PaymentMethod?
   paymentAmount2 Float?
-  bankName2      String?
-  referenceNo2   String?
+  bankName2      String?  @db.VarChar(100)
+  referenceNo2   String?  @db.VarChar(100)
   
   // External Marketplace Data
-  externalOrderId  String?         // Order ID dari marketplace
-  externalInvoice  String?         // Invoice/AWB number
-  externalStatus   String?         // Status asli dari marketplace
+  externalOrderId  String?  @db.VarChar(100) // Order ID dari marketplace
+  externalInvoice  String?  @db.VarChar(100) // Invoice/AWB number
+  externalStatus   String?  @db.VarChar(50)  // Status asli dari marketplace
   externalData     Json?           // Data tambahan (shipping, courier, etc)
   
   // Device/Platform Source
-  deviceSource     String?         // WEB, ANDROID, IOS, WINDOWS, TOKOPEDIA, SHOPEE, etc
+  deviceSource     String?  @db.VarChar(50) // WEB, ANDROID, IOS, WINDOWS, TOKOPEDIA, SHOPEE, etc
   
-  notes          String?
+  notes          String?    @db.VarChar(1000)
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -538,7 +538,7 @@ model CashTransaction {
   id            String     @id @default(cuid())
   type          CashType
   amount        Float
-  description   String?
+  description   String?    @db.VarChar(500)
   cabang        Cabang     @relation(fields: [cabangId], references: [id])
   cabangId      String
   return        Return?    @relation(fields: [returnId], references: [id])
@@ -563,9 +563,9 @@ model TransactionItem {
   transactionId    String
   productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
   productVariantId String
-  productName      String // Snapshot nama produk
-  variantInfo      String // Snapshot variant (Size: 10)
-  sku              String? // SKU snapshot
+  productName      String  @db.VarChar(255) // Snapshot nama produk
+  variantInfo      String  @db.VarChar(255) // Snapshot variant (Size: 10)
+  sku              String? @db.VarChar(100) // SKU snapshot
   quantity         Int
   price            Float // Harga saat transaksi
   subtotal         Float
@@ -584,9 +584,9 @@ model PriceDiscrepancy {
   expectedPrice    Float // Current price in database
   actualPrice      Float // Price used in transaction (offline data)
   difference       Float // expectedPrice - actualPrice
-  reason           String // Explanation
+  reason           String  @db.VarChar(500) // Explanation
   resolved         Boolean        @default(false)
-  resolvedBy       String? // User ID who resolved
+  resolvedBy       String? @db.VarChar(50) // User ID who resolved
   resolvedAt       DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
@@ -599,8 +599,8 @@ model Settings {
   id        String   @id @default(cuid())
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId  String
-  key       String
-  value     String
+  key       String   @db.VarChar(100)
+  value     String   @db.VarChar(1000)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -613,14 +613,14 @@ model PrinterSettings {
   id               String   @id @default(cuid())
   cabangId         String?  @unique
   autoPrintEnabled Boolean  @default(true)
-  printerName      String?
+  printerName      String?  @db.VarChar(255)
   paperWidth       Int      @default(80)
-  storeName        String   @default("Pelaris.id")
-  branchName       String?
-  address          String?
-  phone            String?
-  footerText1      String?
-  footerText2      String?
+  storeName        String   @default("Pelaris.id") @db.VarChar(100)
+  branchName       String?  @db.VarChar(100)
+  address          String?  @db.VarChar(500)
+  phone            String?  @db.VarChar(20)
+  footerText1      String?  @db.VarChar(255)
+  footerText2      String?  @db.VarChar(255)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -632,20 +632,20 @@ model PrinterSettings {
 // Order Management - Product requests from KASIR
 model Order {
   id              String      @id @default(cuid())
-  orderNo         String      @unique // ORD-20251126-0001
+  orderNo         String      @unique @db.VarChar(50) // ORD-20251126-0001
   requestedBy     User        @relation("RequestedOrders", fields: [requestedById], references: [id])
   requestedById   String
   cabang          Cabang      @relation(fields: [cabangId], references: [id])
   cabangId        String
-  productName     String
+  productName     String      @db.VarChar(255)
   productType     ProductType @default(SINGLE)
   categoryId      String?
-  categoryName    String?
+  categoryName    String?     @db.VarChar(100)
   price           Float?
   quantity        Int?
   status          OrderStatus @default(PENDING)
-  notes           String?
-  rejectionReason String?
+  notes           String?     @db.VarChar(500)
+  rejectionReason String?     @db.VarChar(500)
   processedBy     User?       @relation("ProcessedOrders", fields: [processedById], references: [id])
   processedById   String?
   processedAt     DateTime?
@@ -670,7 +670,7 @@ enum OrderStatus {
 // Stock Transfer between branches
 model StockTransfer {
   id              String         @id @default(cuid())
-  transferNo      String         @unique // TRF-20251126-0001
+  transferNo      String         @unique @db.VarChar(50) // TRF-20251126-0001
   productVariant  ProductVariant @relation(fields: [variantId], references: [id])
   variantId       String
   fromCabang      Cabang         @relation("TransfersFrom", fields: [fromCabangId], references: [id])
@@ -680,7 +680,7 @@ model StockTransfer {
   quantity        Int
   transferredBy   User           @relation(fields: [transferredById], references: [id])
   transferredById String
-  notes           String?
+  notes           String?        @db.VarChar(500)
   status          TransferStatus @default(COMPLETED)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
