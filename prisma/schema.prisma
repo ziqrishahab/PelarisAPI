@@ -286,7 +286,7 @@ model Category {
   id          String    @id @default(cuid())
   tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId    String
-  name        String    @unique
+  name        String
   description String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

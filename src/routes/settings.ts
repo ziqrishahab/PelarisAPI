@@ -116,6 +116,16 @@ settings.get('/printer', authMiddleware, async (c) => {
       return c.json({ error: 'cabangId diperlukan' }, 400);
     }
 
+    // Get cabang with tenant to fetch tenant name
+    const cabang = await prisma.cabang.findUnique({
+      where: { id: cabangId },
+      include: { tenant: { select: { name: true } } }
+    });
+
+    if (!cabang) {
+      return c.json({ error: 'Cabang tidak ditemukan' }, 404);
+    }
+
     let printerSettings = await prisma.printerSettings.findUnique({
       where: { cabangId }
     });
@@ -123,11 +133,20 @@ settings.get('/printer', authMiddleware, async (c) => {
     // Create default if not exists
     if (!printerSettings) {
       printerSettings = await prisma.printerSettings.create({
-        data: { cabangId }
+        data: { 
+          cabangId,
+          storeName: cabang.tenant.name  // Use tenant name
+        }
       });
     }
 
-    return c.json(printerSettings);
+    // Always return storeName from tenant (override DB value)
+    const response = {
+      ...printerSettings,
+      storeName: cabang.tenant.name || printerSettings.storeName || ''
+    };
+
+    return c.json(response);
   } catch (error) {
     logError(error, { context: 'Get printer settings' });
     return c.json({ error: 'Terjadi kesalahan server' }, 500);
@@ -258,125 +277,6 @@ settings.get('/:key', authMiddleware, async (c) => {
     return c.json({ key: setting.key, value: setting.value });
   } catch (error) {
     logError(error, { context: 'Get setting by key' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
-  }
-});
-
-// ============ TENANT NAME MANAGEMENT ============
-// Get tenant info (name & last change date)
-settings.get('/tenant', authMiddleware, async (c) => {
-  try {
-    const user = c.get('user');
-    const tenantId = user.tenantId;
-    
-    if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
-    }
-
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { id: true, name: true, lastNameChangeAt: true, createdAt: true }
-    });
-
-    if (!tenant) {
-      return c.json({ error: 'Tenant tidak ditemukan' }, 404);
-    }
-
-    // Calculate if name can be changed (30 days = 2592000000ms)
-    const canChangeName = !tenant.lastNameChangeAt || 
-      (Date.now() - tenant.lastNameChangeAt.getTime()) >= 2592000000;
-    
-    const daysUntilNextChange = tenant.lastNameChangeAt 
-      ? Math.max(0, 30 - Math.floor((Date.now() - tenant.lastNameChangeAt.getTime()) / 86400000))
-      : 0;
-
-    return c.json({
-      ...tenant,
-      canChangeName,
-      daysUntilNextChange
-    });
-  } catch (error) {
-    logError(error, { context: 'Get tenant info' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
-  }
-});
-
-// Update tenant name (Owner only, max once per 30 days)
-// Rate limited: 3 attempts per 15 minutes
-settings.put('/tenant/name', rateLimiter({ max: 3 }), authMiddleware, ownerOnly, async (c) => {
-  try {
-    const user = c.get('user');
-    const tenantId = user.tenantId;
-    
-    if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
-    }
-
-    const body = await c.req.json();
-    const { name } = body;
-
-    // Validation
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      return c.json({ error: 'Nama tenant tidak valid' }, 400);
-    }
-
-    if (name.trim().length > 50) {
-      return c.json({ error: 'Nama tenant maksimal 50 karakter' }, 400);
-    }
-
-    // Get current tenant
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { name: true, lastNameChangeAt: true }
-    });
-
-    if (!tenant) {
-      return c.json({ error: 'Tenant tidak ditemukan' }, 404);
-    }
-
-    // Check 30-day restriction
-    if (tenant.lastNameChangeAt) {
-      const daysSinceLastChange = Math.floor(
-        (Date.now() - tenant.lastNameChangeAt.getTime()) / 86400000
-      );
-      
-      if (daysSinceLastChange < 30) {
-        const daysRemaining = 30 - daysSinceLastChange;
-        return c.json({ 
-          error: `Nama tenant hanya dapat diubah setiap 30 hari. Tunggu ${daysRemaining} hari lagi.`,
-          daysRemaining
-        }, 403);
-      }
-    }
-
-    // Update tenant name
-    const updatedTenant = await prisma.tenant.update({
-      where: { id: tenantId },
-      data: { 
-        name: name.trim(),
-        lastNameChangeAt: new Date()
-      },
-      select: { id: true, name: true, lastNameChangeAt: true }
-    });
-
-    // Auto-update PrinterSettings storeName for all branches
-    await prisma.printerSettings.updateMany({
-      where: {
-        cabang: {
-          tenantId
-        }
-      },
-      data: {
-        storeName: name.trim()
-      }
-    });
-
-    return c.json({
-      message: 'Nama tenant berhasil diubah',
-      tenant: updatedTenant
-    });
-  } catch (error) {
-    logError(error, { context: 'Update tenant name' });
     return c.json({ error: 'Terjadi kesalahan server' }, 500);
   }
 });

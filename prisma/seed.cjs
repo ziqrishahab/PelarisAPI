@@ -3,22 +3,23 @@ const bcrypt = require('bcryptjs');
 
 const prisma = new PrismaClient();
 
-async function main() {
-  console.log('🌱 Seeding database...');
-  console.log('');
-
+async function seedTenant(tenantData) {
+  const { name, slug, ownerEmail, kasirEmail } = tenantData;
+  
+  console.log(`\n📦 Seeding tenant: ${name}`);
+  
   // ============ TENANT ============
   const tenant = await prisma.tenant.upsert({
-    where: { slug: 'demo-store' },
+    where: { slug },
     update: {},
     create: {
-      name: 'Demo Store',
-      slug: 'demo-store',
+      name,
+      slug,
       isActive: true
     }
   });
 
-  console.log('✅ Tenant created:', tenant.name);
+  console.log('  ✅ Tenant created:', tenant.name);
 
   // ============ CABANG ============
   const cabangPusat = await prisma.cabang.upsert({
@@ -37,7 +38,7 @@ async function main() {
     }
   });
 
-  console.log('✅ Cabang created:', cabangPusat.name);
+  console.log('  ✅ Cabang created:', cabangPusat.name);
 
   // ============ USERS ============
   const hashedOwnerPassword = await bcrypt.hash('owner123', 10);
@@ -45,7 +46,7 @@ async function main() {
   
   // Owner - akses semua cabang
   const owner = await prisma.user.upsert({
-    where: { email: 'owner@demo.com' },
+    where: { email: ownerEmail },
     update: {
       password: hashedOwnerPassword,
       cabangId: null,
@@ -53,9 +54,9 @@ async function main() {
       tenantId: tenant.id
     },
     create: {
-      email: 'owner@demo.com',
+      email: ownerEmail,
       password: hashedOwnerPassword,
-      name: 'Owner Demo',
+      name: `Owner ${name}`,
       role: 'OWNER',
       cabangId: null,
       hasMultiCabangAccess: true,
@@ -63,19 +64,19 @@ async function main() {
     }
   });
 
-  console.log('✅ Owner created:', owner.email);
+  console.log('  ✅ Owner created:', owner.email);
 
   // Kasir - hanya 1 cabang
   const kasir = await prisma.user.upsert({
-    where: { email: 'kasir@demo.com' },
+    where: { email: kasirEmail },
     update: {
       password: hashedKasirPassword,
       tenantId: tenant.id
     },
     create: {
-      email: 'kasir@demo.com',
+      email: kasirEmail,
       password: hashedKasirPassword,
-      name: 'Kasir Demo',
+      name: `Kasir ${name}`,
       role: 'KASIR',
       cabangId: cabangPusat.id,
       hasMultiCabangAccess: false,
@@ -83,10 +84,9 @@ async function main() {
     }
   });
 
-  console.log('✅ Kasir created:', kasir.email);
+  console.log('  ✅ Kasir created:', kasir.email);
 
   // ============ CATEGORIES ============
-  // Generic categories untuk berbagai jenis usaha
   const categoryData = [
     { name: 'Makanan', description: 'Produk makanan dan snack' },
     { name: 'Minuman', description: 'Produk minuman' },
@@ -114,34 +114,7 @@ async function main() {
     )
   );
 
-  console.log('✅ Categories created:', categories.length);
-
-  // ============ SALES CHANNELS ============
-  // ChannelType: POS, MARKETPLACE, WEBSITE, SOCIAL, OTHER
-  const channelData = [
-    { code: 'POS', name: 'Point of Sale', type: 'POS', isBuiltIn: true },
-    { code: 'WHATSAPP', name: 'WhatsApp', type: 'SOCIAL' },
-    { code: 'TOKOPEDIA', name: 'Tokopedia', type: 'MARKETPLACE' },
-    { code: 'SHOPEE', name: 'Shopee', type: 'MARKETPLACE' }
-  ];
-
-  const channels = await Promise.all(
-    channelData.map(ch =>
-      prisma.salesChannel.upsert({
-        where: { code: ch.code },
-        update: {},
-        create: {
-          code: ch.code,
-          name: ch.name,
-          type: ch.type,
-          isBuiltIn: ch.isBuiltIn || false,
-          isActive: true
-        }
-      })
-    )
-  );
-
-  console.log('✅ Sales Channels created:', channels.length);
+  console.log('  ✅ Categories created:', categories.length);
 
   // ============ SETTINGS ============
   const settingsData = [
@@ -175,14 +148,18 @@ async function main() {
     )
   );
 
-  console.log('✅ Settings created:', settingsData.length);
+  console.log('  ✅ Settings created:', settingsData.length);
 
   // ============ PRINTER SETTINGS ============
+  // storeName diambil dari tenant.name (NO HARDCODE!)
   await prisma.printerSettings.upsert({
     where: { cabangId: cabangPusat.id },
-    update: {},
+    update: {
+      storeName: tenant.name  // Sync from tenant
+    },
     create: {
       cabang: { connect: { id: cabangPusat.id } },
+      storeName: tenant.name,  // From tenant.name
       branchName: 'Cabang Pusat',
       address: 'Jl. Utama No. 1',
       phone: '081234567890',
@@ -191,7 +168,63 @@ async function main() {
     }
   });
 
-  console.log('✅ Printer settings created');
+  console.log('  ✅ Printer settings created (storeName synced from tenant)');
+
+  return {
+    tenant,
+    cabangPusat,
+    owner,
+    kasir,
+    categoriesCount: categories.length,
+    settingsCount: settingsData.length
+  };
+}
+
+async function main() {
+  console.log('🌱 Seeding database...');
+  console.log('');
+
+  // ============ SALES CHANNELS (GLOBAL) ============
+  const channelData = [
+    { code: 'POS', name: 'Point of Sale', type: 'POS', isBuiltIn: true },
+    { code: 'WHATSAPP', name: 'WhatsApp', type: 'SOCIAL' },
+    { code: 'TOKOPEDIA', name: 'Tokopedia', type: 'MARKETPLACE' },
+    { code: 'SHOPEE', name: 'Shopee', type: 'MARKETPLACE' }
+  ];
+
+  const channels = await Promise.all(
+    channelData.map(ch =>
+      prisma.salesChannel.upsert({
+        where: { code: ch.code },
+        update: {},
+        create: {
+          code: ch.code,
+          name: ch.name,
+          type: ch.type,
+          isBuiltIn: ch.isBuiltIn || false,
+          isActive: true
+        }
+      })
+    )
+  );
+
+  console.log('✅ Sales Channels created:', channels.length);
+
+  // ============ SEED TENANT 1: Demo Store ============
+  const demoStore = await seedTenant({
+    name: 'Demo Store',
+    slug: 'demo-store',
+    ownerEmail: 'owner@demo.com',
+    kasirEmail: 'kasir@demo.com'
+  });
+
+  // ============ SEED TENANT 2: Harapan Abah ============
+  const harapanAbah = await seedTenant({
+    name: 'Harapan Abah',
+    slug: 'harapan-abah',
+    ownerEmail: 'owner@harapanabah.com',
+    kasirEmail: 'kasir@harapanabah.com'
+  });
 
   // ============ SUMMARY ============
   console.log('');
@@ -200,26 +233,39 @@ async function main() {
   console.log('═══════════════════════════════════════════');
   console.log('');
   console.log('📋 Demo Accounts:');
+  console.log('');
   console.log('┌─────────────────────────────────────────┐');
+  console.log('│ TENANT 1: Demo Store                    │');
+  console.log('├─────────────────────────────────────────┤');
   console.log('│ OWNER                                   │');
   console.log('│   Email    : owner@demo.com             │');
   console.log('│   Password : owner123                   │');
-  console.log('│   Access   : All branches               │');
   console.log('├─────────────────────────────────────────┤');
   console.log('│ KASIR                                   │');
   console.log('│   Email    : kasir@demo.com             │');
   console.log('│   Password : kasir123                   │');
-  console.log('│   Access   : Cabang Pusat only          │');
+  console.log('└─────────────────────────────────────────┘');
+  console.log('');
+  console.log('┌─────────────────────────────────────────┐');
+  console.log('│ TENANT 2: Harapan Abah                  │');
+  console.log('├─────────────────────────────────────────┤');
+  console.log('│ OWNER                                   │');
+  console.log('│   Email    : owner@harapanabah.com      │');
+  console.log('│   Password : owner123                   │');
+  console.log('├─────────────────────────────────────────┤');
+  console.log('│ KASIR                                   │');
+  console.log('│   Email    : kasir@harapanabah.com      │');
+  console.log('│   Password : kasir123                   │');
   console.log('└─────────────────────────────────────────┘');
   console.log('');
   console.log('📦 Data Created:');
-  console.log('   • 1 Tenant (Demo Store)');
-  console.log('   • 1 Cabang (Cabang Pusat)');
-  console.log('   • 2 Users (Owner + Kasir)');
-  console.log(`   • ${categories.length} Categories`);
-  console.log(`   • ${channels.length} Sales Channels (POS, WhatsApp, Tokopedia, Shopee)`);
-  console.log(`   • ${settingsData.length} App Settings`);
-  console.log('   • 1 Printer Settings');
+  console.log('   • 2 Tenants (Demo Store, Harapan Abah)');
+  console.log('   • 2 Cabangs (1 per tenant)');
+  console.log('   • 4 Users (2 per tenant)');
+  console.log(`   • ${demoStore.categoriesCount * 2} Categories total`);
+  console.log(`   • ${channels.length} Sales Channels (global)`);
+  console.log(`   • ${demoStore.settingsCount * 2} App Settings total`);
+  console.log('   • 2 Printer Settings (storeName synced from tenant.name)');
   console.log('');
 }
 
