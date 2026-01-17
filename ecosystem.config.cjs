@@ -3,7 +3,7 @@
 
 module.exports = {
   apps: [{
-    name: 'Pelaris.id-api',
+    name: 'api-pelaris',
     script: 'npm',
     args: 'start',
     interpreter: 'none',
