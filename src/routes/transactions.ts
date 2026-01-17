@@ -277,7 +277,7 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
   }
 });
 
-// Get all transactions with filters
+// Get all transactions with filters and pagination
 transactions.get('/', authMiddleware, async (c) => {
   try {
     const user = c.get('user');
@@ -288,6 +288,11 @@ transactions.get('/', authMiddleware, async (c) => {
     const channelId = c.req.query('channelId');
     const status = c.req.query('status');
     const search = c.req.query('search');
+    
+    // Pagination parameters
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200); // Max 200
+    const skip = (page - 1) * limit;
 
     const where: any = {};
     
@@ -326,19 +331,70 @@ transactions.get('/', authMiddleware, async (c) => {
       ];
     }
 
+    // Get total count for pagination
+    const totalCount = await prisma.transaction.count({ where });
+    const totalPages = Math.ceil(totalCount / limit);
+
+    // Fetch transactions with pagination and optimized select
     const transactionList = await prisma.transaction.findMany({
       where,
-      include: {
+      select: {
+        id: true,
+        transactionNo: true,
+        customerName: true,
+        customerPhone: true,
+        subtotal: true,
+        discount: true,
+        tax: true,
+        total: true,
+        paymentMethod: true,
+        bankName: true,
+        referenceNo: true,
+        cardLastDigits: true,
+        isSplitPayment: true,
+        paymentAmount1: true,
+        paymentMethod2: true,
+        paymentAmount2: true,
+        status: true,
+        channelId: true,
+        externalOrderId: true,
+        buyerUsername: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
         items: {
-          include: {
+          select: {
+            id: true,
+            productVariantId: true,
+            productName: true,
+            variantInfo: true,
+            quantity: true,
+            price: true,
+            subtotal: true,
             productVariant: {
-              include: {
-                product: true
+              select: {
+                id: true,
+                sku: true,
+                variantName: true,
+                variantValue: true,
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    categoryId: true
+                  }
+                }
               }
             }
           }
         },
-        cabang: true,
+        cabang: {
+          select: {
+            id: true,
+            name: true,
+            address: true
+          }
+        },
         kasir: {
           select: {
             id: true,
@@ -346,7 +402,15 @@ transactions.get('/', authMiddleware, async (c) => {
             email: true
           }
         },
-        channel: true,
+        channel: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            type: true,
+            icon: true
+          }
+        },
         returns: {
           select: {
             id: true,
@@ -360,7 +424,8 @@ transactions.get('/', authMiddleware, async (c) => {
         }
       },
       orderBy: { createdAt: 'desc' },
-      take: 100
+      skip,
+      take: limit
     });
 
     // Add returnStatus helper field
@@ -370,7 +435,17 @@ transactions.get('/', authMiddleware, async (c) => {
       hasReturn: t.returns.length > 0
     }));
 
-    return c.json(transactionsWithReturnStatus);
+    return c.json({
+      data: transactionsWithReturnStatus,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1
+      }
+    });
   } catch (error) {
     logError(error, { context: 'Get transactions' });
     return c.json({ error: ERR.SERVER_ERROR }, 500);

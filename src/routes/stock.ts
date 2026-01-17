@@ -29,7 +29,7 @@ interface AlertBody {
 
 const stock = new Hono<{ Variables: Variables }>();
 
-// GET /api/stock/adjustments - Get all stock adjustments with filters
+// GET /api/stock/adjustments - Get all stock adjustments with filters and pagination
 stock.get('/adjustments', authMiddleware, async (c) => {
   try {
     const cabangId = c.req.query('cabangId');
@@ -38,7 +38,7 @@ stock.get('/adjustments', authMiddleware, async (c) => {
     const endDate = c.req.query('endDate');
     const reason = c.req.query('reason');
     const page = parseInt(c.req.query('page') || '1');
-    const limit = parseInt(c.req.query('limit') || '50');
+    const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200);
     
     const where: any = {};
     
@@ -57,16 +57,42 @@ stock.get('/adjustments', authMiddleware, async (c) => {
     const [adjustments, total] = await Promise.all([
       prisma.stockAdjustment.findMany({
         where,
-        include: {
+        select: {
+          id: true,
+          previousQty: true,
+          newQty: true,
+          difference: true,
+          reason: true,
+          notes: true,
+          createdAt: true,
           productVariant: {
-            include: {
+            select: {
+              id: true,
+              sku: true,
+              variantName: true,
+              variantValue: true,
               product: {
-                select: { id: true, name: true }
+                select: { 
+                  id: true, 
+                  name: true,
+                  categoryId: true
+                }
               }
             }
           },
-          cabang: { select: { id: true, name: true } },
-          adjustedBy: { select: { id: true, name: true } }
+          cabang: { 
+            select: { 
+              id: true, 
+              name: true 
+            } 
+          },
+          adjustedBy: { 
+            select: { 
+              id: true, 
+              name: true,
+              role: true
+            } 
+          }
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -81,7 +107,9 @@ stock.get('/adjustments', authMiddleware, async (c) => {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit)
+        totalPages: Math.ceil(total / limit),
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1
       }
     });
   } catch (error) {
@@ -201,6 +229,10 @@ stock.post('/adjustment', rateLimiter({ max: 30, windowMs: 5 * 60 * 1000 }), aut
       previousQty,
       adjustmentId: result.adjustment.id
     });
+    
+    // Clear stock cache
+    const { clearStockCache } = await import('../lib/cache.js');
+    await clearStockCache(cabangId, variantId);
     
     // Log stock adjustment
     logStock(type, variantId, cabangId, quantity, previousQty, userId);

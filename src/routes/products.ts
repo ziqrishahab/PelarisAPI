@@ -52,7 +52,7 @@ interface ProductBody {
 
 const products = new Hono<{ Variables: Variables }>();
 
-// Get all categories
+// Get all categories (with Redis caching)
 products.get('/categories', authMiddleware, async (c) => {
   try {
     const user = c.get('user');
@@ -62,18 +62,34 @@ products.get('/categories', authMiddleware, async (c) => {
       return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
-    const categories = await prisma.category.findMany({
-      where: { tenantId },
-      include: {
-        _count: {
-          select: { 
-            products: {
-              where: { isActive: true }
+    // Try cache first
+    const { getCacheOrSet, CacheKeys, CACHE_TTL } = await import('../lib/cache.js');
+    
+    const categories = await getCacheOrSet(
+      CacheKeys.categories(tenantId),
+      async () => {
+        return await prisma.category.findMany({
+          where: { tenantId },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            createdAt: true,
+            updatedAt: true,
+            _count: {
+              select: { 
+                products: {
+                  where: { isActive: true }
+                }
+              }
             }
-          }
-        }
-      }
-    });
+          },
+          orderBy: { name: 'asc' }
+        });
+      },
+      CACHE_TTL.MEDIUM // Cache for 5 minutes
+    );
+    
     return c.json(categories);
   } catch (error) {
     logError(error, { context: 'Gagal mengambil kategori' });
@@ -102,6 +118,10 @@ products.post('/categories', authMiddleware, ownerOrManager, async (c) => {
     const category = await prisma.category.create({
       data: { name, description, tenantId }
     });
+
+    // Clear category cache
+    const { clearCategoryCache } = await import('../lib/cache.js');
+    await clearCategoryCache(tenantId);
 
     emitCategoryUpdated(category);
     return c.json(category, 201);
@@ -150,6 +170,10 @@ products.put('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
       where: { id },
       data: { name, description }
     });
+
+    // Clear category cache
+    const { clearCategoryCache } = await import('../lib/cache.js');
+    await clearCategoryCache(tenantId, id);
 
     emitCategoryUpdated(category);
     return c.json(category);
@@ -218,6 +242,10 @@ products.delete('/categories/:id', authMiddleware, ownerOrManager, async (c) => 
       return categoryProducts.length;
     });
 
+    // Clear category cache
+    const { clearCategoryCache } = await import('../lib/cache.js');
+    await clearCategoryCache(tenantId, id);
+
     return c.json({ 
       message: 'Category deleted successfully',
       productsDeleted: deletedCount
@@ -234,7 +262,7 @@ products.delete('/categories/:id', authMiddleware, ownerOrManager, async (c) => 
   }
 });
 
-// Get all products with filters and pagination
+// Get all products with filters and pagination (with Redis caching)
 products.get('/', authMiddleware, async (c) => {
   try {
     const user = c.get('user');
@@ -254,74 +282,117 @@ products.get('/', authMiddleware, async (c) => {
     const limit = Math.min(parseInt(c.req.query('limit') || '50'), 200); // Max 200
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      tenantId: tenantId // Filter by tenant
-    };
-    if (categoryId) where.categoryId = categoryId;
-    if (isActive !== undefined) where.isActive = isActive === 'true';
+    // Create cache key based on filters
+    const filterKey = `${categoryId || 'all'}_${isActive || 'all'}_${search || 'none'}_p${page}_l${limit}`;
+    const { getCacheOrSet, CacheKeys, CACHE_TTL } = await import('../lib/cache.js');
+    
+    const result = await getCacheOrSet(
+      CacheKeys.products(tenantId, filterKey),
+      async () => {
+        const where: any = {
+          tenantId: tenantId // Filter by tenant
+        };
+        if (categoryId) where.categoryId = categoryId;
+        if (isActive !== undefined) where.isActive = isActive === 'true';
 
-    // Build search conditions
-    if (search) {
-      const searchTerm = search.trim();
-      const keywords = searchTerm.split(/\s+/).filter(k => k.length > 0);
-      
-      const searchConditions: any[] = [];
-      
-      searchConditions.push({ name: { contains: searchTerm, mode: 'insensitive' } });
-      keywords.forEach(keyword => {
-        searchConditions.push({ name: { contains: keyword, mode: 'insensitive' } });
-      });
-      
-      searchConditions.push({ description: { contains: searchTerm, mode: 'insensitive' } });
-      searchConditions.push({ 
-        category: { name: { contains: searchTerm, mode: 'insensitive' } }
-      });
-      searchConditions.push({ 
-        variants: { some: { sku: { contains: searchTerm, mode: 'insensitive' } } }
-      });
-      searchConditions.push({ 
-        variants: { some: { variantValue: { contains: searchTerm, mode: 'insensitive' } } }
-      });
-      
-      where.OR = searchConditions;
-    }
+        // Build search conditions
+        if (search) {
+          const searchTerm = search.trim();
+          const keywords = searchTerm.split(/\s+/).filter(k => k.length > 0);
+          
+          const searchConditions: any[] = [];
+          
+          searchConditions.push({ name: { contains: searchTerm, mode: 'insensitive' } });
+          keywords.forEach(keyword => {
+            searchConditions.push({ name: { contains: keyword, mode: 'insensitive' } });
+          });
+          
+          searchConditions.push({ description: { contains: searchTerm, mode: 'insensitive' } });
+          searchConditions.push({ 
+            category: { name: { contains: searchTerm, mode: 'insensitive' } }
+          });
+          searchConditions.push({ 
+            variants: { some: { sku: { contains: searchTerm, mode: 'insensitive' } } }
+          });
+          searchConditions.push({ 
+            variants: { some: { variantValue: { contains: searchTerm, mode: 'insensitive' } } }
+          });
+          
+          where.OR = searchConditions;
+        }
 
-    // Get total count for pagination
-    const totalCount = await prisma.product.count({ where });
-    const totalPages = Math.ceil(totalCount / limit);
+        // Get total count for pagination
+        const totalCount = await prisma.product.count({ where });
+        const totalPages = Math.ceil(totalCount / limit);
 
-    // Fetch products with pagination
-    const productList = await prisma.product.findMany({
-      where,
-      include: {
-        category: true,
-        variants: {
-          include: {
-            stocks: {
-              include: {
-                cabang: true
+        // Fetch products with pagination and optimized select
+        const productList = await prisma.product.findMany({
+          where,
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            categoryId: true,
+            productType: true,
+            isActive: true,
+            createdAt: true,
+            updatedAt: true,
+            category: {
+              select: {
+                id: true,
+                name: true,
+                description: true
+              }
+            },
+            variants: {
+              select: {
+                id: true,
+                variantName: true,
+                variantValue: true,
+                sku: true,
+                weight: true,
+                length: true,
+                width: true,
+                height: true,
+                imageUrl: true,
+                stocks: {
+                  select: {
+                    id: true,
+                    quantity: true,
+                    price: true,
+                    cabangId: true,
+                    cabang: {
+                      select: {
+                        id: true,
+                        name: true
+                      }
+                    }
+                  }
+                }
               }
             }
-          }
-        }
-      },
-      orderBy: search ? undefined : { name: 'asc' },
-      skip,
-      take: limit,
-    });
+          },
+          orderBy: search ? undefined : { name: 'asc' },
+          skip,
+          take: limit,
+        });
 
-    // Return with pagination metadata
-    return c.json({
-      data: productList,
-      pagination: {
-        page,
-        limit,
-        totalCount,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
-      }
-    });
+        return {
+          data: productList,
+          pagination: {
+            page,
+            limit,
+            totalCount,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          }
+        };
+      },
+      CACHE_TTL.SHORT // Cache for 1 minute (products change frequently)
+    );
+
+    return c.json(result);
   } catch (error) {
     logError(error, { context: 'Gagal mengambil data produk' });
     return c.json({ error: 'Terjadi kesalahan server' }, 500);
@@ -820,6 +891,11 @@ products.post('/', rateLimiter({ max: 50 }), authMiddleware, ownerOrManager, asy
     });
 
     emitProductCreated(product);
+    
+    // Clear product cache
+    const { clearProductCache } = await import('../lib/cache.js');
+    await clearProductCache(tenantId, product?.id);
+    
     return c.json(product, 201);
   } catch (error: any) {
     logError(error, { context: 'Create product error:' });

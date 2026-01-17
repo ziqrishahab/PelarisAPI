@@ -153,6 +153,11 @@ stockTransfers.post('/', rateLimiter({ max: 30 }), authMiddleware, async (c) => 
         variantId,
         quantity
       });
+      
+      // Clear stock cache for both cabangs
+      const { clearStockCache } = await import('../lib/cache.js');
+      await clearStockCache(fromCabangId, variantId);
+      await clearStockCache(toCabangId, variantId);
     }
 
     logger.info('Stock transfer created', {
