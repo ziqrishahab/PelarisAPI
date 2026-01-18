@@ -26,6 +26,7 @@ import { rateLimiter, strictRateLimiter } from './middleware/rate-limit.js';
 import { security } from './middleware/security.js';
 import { timeout } from './middleware/timeout.js';
 import { requestId } from './middleware/request-id.js';
+import { IS_DEV } from './config/index.js';
 
 // Import routes
 import auth from './routes/auth.js';
@@ -129,11 +130,13 @@ app.use('*', async (c, next) => {
   }
 });
 
-// Global Rate Limiter - 100 requests per 15 minutes per IP
+// Global Rate Limiter 
+// Dev mode: 1000 requests per 15 minutes (effectively no limit)
+// Production: 100 requests per 15 minutes per IP
 // Skipped for health check and root endpoint
 app.use('/api/*', rateLimiter({
   windowMs: 15 * 60 * 1000,  // 15 minutes
-  max: 100,                   // 100 requests per window
+  max: IS_DEV ? 1000 : 100,  // Higher limit in dev for E2E testing
 }));
 
 // Root endpoint
