@@ -43,6 +43,9 @@ import channels from './routes/channels.js';
 import tenants from './routes/tenants.js';
 import health from './routes/health.js';
 
+// Import API documentation
+import { docsRouter } from './lib/swagger.js';
+
 // Import socket helper
 import { initSocket } from './lib/socket.js';
 
@@ -143,6 +146,16 @@ app.use('/api/*', rateLimiter({
 app.get('/', (c) => {
   return c.json({ message: 'Pelaris.id API - Omnichannel System (Hono)' });
 });
+
+// API Documentation (Swagger UI)
+app.route('/api/docs', docsRouter);
+
+// Debug endpoint to test Sentry (development only)
+if (IS_DEV) {
+  app.get('/api/debug-sentry', (c) => {
+    throw new Error('Test Sentry error from backend!');
+  });
+}
 
 // Health check routes
 app.route('/health', health);

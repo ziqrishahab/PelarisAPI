@@ -26,11 +26,12 @@ Backend API dibangun dengan Hono framework yang sangat lightweight dan fast. Men
 - Multi-tenant architecture dengan tenant isolation
 - Real-time sync via WebSocket (Socket.io)
 - Database connection pooling (max 10 connections)
-- Redis caching untuk performance
+- Redis caching untuk performance (optional, fallback to in-memory)
 - Auto backup database harian (00:00 WIB)
 - Comprehensive error logging (Winston)
 - Rate limiting & CSRF protection
-- API versioning (/api/v1/*)
+- **API Documentation:** Swagger/OpenAPI 3.0 di `/api/docs`
+- **Error Monitoring:** Sentry integration
 
 ---
 
@@ -43,11 +44,12 @@ Backend API dibangun dengan Hono framework yang sangat lightweight dan fast. Men
 | **TypeScript** | 5.9 | Type-safe development |
 | **Prisma** | 6.19 | ORM & database migrations |
 | **PostgreSQL** | 16 | Primary database |
-| **Redis** | 7 | Caching layer |
+| **Redis** | 7 | Caching layer (optional) |
 | **Socket.io** | 4.8 | Real-time WebSocket |
 | **bcryptjs** | Latest | Password hashing |
 | **jsonwebtoken** | Latest | JWT authentication |
 | **Winston** | Latest | Logging |
+| **Sentry** | Latest | Error monitoring |
 | **ExcelJS** | Latest | Excel import/export |
 | **Zod** | 4.3 | Schema validation |
 | **Vitest** | 4.0 | Unit testing |
@@ -60,7 +62,7 @@ Backend API dibangun dengan Hono framework yang sangat lightweight dan fast. Men
 
 - Node.js 22.x atau lebih baru
 - PostgreSQL 16
-- Redis 7 (optional, tapi recommended)
+- Redis 7 (optional untuk development, wajib untuk production)
 
 ### 2. Install Dependencies
 
@@ -92,9 +94,13 @@ JWT_SECRET=your-super-secret-key-min-32-characters
 JWT_EXPIRES_IN=7d
 JWT_REFRESH_EXPIRES_IN=30d
 
-# Redis (optional tapi recommended)
+# Redis (optional untuk development)
 REDIS_URL=redis://localhost:6379
 REDIS_PASSWORD=
+
+# Sentry Error Monitoring
+SENTRY_DSN=https://your-dsn@sentry.io/project-id
+SENTRY_ENABLED=true
 
 # File Upload
 MAX_FILE_SIZE=10485760  # 10MB
@@ -198,15 +204,21 @@ npm run db:restore backup_filename.sql
 
 ## API Documentation
 
+### Swagger UI
+
+**Interactive API Documentation:** http://localhost:5100/api/docs
+
+Swagger UI menyediakan:
+- Complete API reference dengan schema
+- Try-it-out functionality untuk test endpoint
+- Request/Response examples
+- Authentication testing
+- Model definitions
+
 ### Base URL
 
 **Development:** `http://localhost:5100/api`  
 **Production:** `https://api.pelaris.id/api`
-
-### API Versioning
-
-- **Current Version:** `/api/v1/*`
-- **Legacy (backward compatible):** `/api/*`
 
 ### Authentication
 
@@ -216,17 +228,18 @@ Semua endpoint (kecuali login/register) memerlukan JWT token di header:
 Authorization: Bearer <jwt_token>
 ```
 
-### Endpoints
+**atau** menggunakan HttpOnly Cookie (automatic dari browser).
+
+### Quick Reference
 
 #### Authentication
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/auth/register` | Daftar tenant baru |
 | POST | `/api/auth/login` | Login user |
-| POST | `/api/auth/refresh` | Refresh JWT token |
-| POST | `/api/auth/logout` | Logout user |
 | GET | `/api/auth/me` | Get user profile |
+| POST | `/api/auth/logout` | Logout user |
+| GET/POST | `/api/auth/users` | Manage users (Owner/Manager) |
 
 #### Products
 
@@ -236,20 +249,21 @@ Authorization: Bearer <jwt_token>
 | GET | `/api/products/:id` | Get product detail |
 | POST | `/api/products` | Create product |
 | PUT | `/api/products/:id` | Update product |
-| DELETE | `/api/products/:id` | Delete product (smart delete) |
-| POST | `/api/products/bulk-delete` | Bulk delete (max 100) |
+| DELETE | `/api/products/:id` | Delete product (soft delete) |
+| POST | `/api/products/bulk-delete` | Bulk delete |
 | POST | `/api/products/import` | Import from Excel |
 | GET | `/api/products/export` | Export to Excel |
-| GET | `/api/products/template` | Download template Excel |
+| GET | `/api/products/template` | Download template |
+| GET | `/api/products/search/sku/:sku` | Search by barcode |
 
 #### Transactions
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/transactions` | List transactions (pagination) |
-| GET | `/api/transactions/:id` | Get transaction detail |
+| GET | `/api/transactions` | List transactions |
+| GET | `/api/transactions/:id` | Get detail |
 | POST | `/api/transactions` | Create transaction |
-| POST | `/api/transactions/split-payment` | Split payment transaction |
+| GET | `/api/transactions/reports/*` | Sales reports |
 
 #### Stock Management
 
