@@ -123,7 +123,7 @@ products.post('/categories', authMiddleware, ownerOrManager, async (c) => {
     const { clearCategoryCache } = await import('../lib/cache.js');
     await clearCategoryCache(tenantId);
 
-    emitCategoryUpdated(category);
+    emitCategoryUpdated(category, tenantId);
     return c.json(category, 201);
   } catch (error: any) {
     logError(error, { context: 'Gagal membuat kategori' });
@@ -175,7 +175,7 @@ products.put('/categories/:id', authMiddleware, ownerOrManager, async (c) => {
     const { clearCategoryCache } = await import('../lib/cache.js');
     await clearCategoryCache(tenantId, id);
 
-    emitCategoryUpdated(category);
+    emitCategoryUpdated(category, tenantId);
     return c.json(category);
   } catch (error: any) {
     logError(error, { context: 'Gagal update kategori' });
@@ -890,7 +890,7 @@ products.post('/', rateLimiter({ max: 50 }), authMiddleware, ownerOrManager, asy
       });
     });
 
-    emitProductCreated(product);
+    emitProductCreated(product, tenantId);
     
     // Clear product cache
     const { clearProductCache } = await import('../lib/cache.js');
@@ -1049,7 +1049,7 @@ products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
       });
     });
 
-    emitProductUpdated(product);
+    emitProductUpdated(product, tenantId);
     return c.json(product);
   } catch (error: any) {
     logError(error, { context: 'Update product error:' });
@@ -1093,7 +1093,7 @@ products.delete('/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOrManager
         data: { isActive: false }
       });
 
-      emitProductUpdated(updatedProduct);
+      emitProductUpdated(updatedProduct, tenantId);
       return c.json({ 
         message: 'Product has transaction history. Product has been deactivated instead of deleted.',
         action: 'deactivated'
@@ -1101,7 +1101,7 @@ products.delete('/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOrManager
     }
 
     await prisma.product.delete({ where: { id } });
-    emitProductDeleted(id);
+    emitProductDeleted(id, tenantId);
 
     return c.json({ message: 'Product deleted successfully', action: 'deleted' });
   } catch (error: any) {
@@ -1185,7 +1185,7 @@ products.put('/stock/:variantId/:cabangId', authMiddleware, ownerOrManager, asyn
       quantity: newQty,
       previousQuantity: previousQty,
       operation: 'set'
-    });
+    }, cabangId, user.tenantId || undefined);
 
     return c.json(result);
   } catch (error: any) {
@@ -1406,7 +1406,7 @@ products.post('/import', strictRateLimiter({ max: 3 }), authMiddleware, ownerOrM
               cabangId: cabang.id,
               quantity: stock,
               price: price
-            });
+            }, cabang.id, tenantId);
           } else {
             await prisma.stock.create({
               data: { productVariantId: existingVariant.id, cabangId: cabang.id, quantity: stock, price: price }
@@ -1445,7 +1445,7 @@ products.post('/import', strictRateLimiter({ max: 3 }), authMiddleware, ownerOrM
               cabangId: cabang.id,
               quantity: stock,
               price: price
-            });
+            }, cabang.id, tenantId);
           }
           continue;
         }
@@ -1611,7 +1611,7 @@ products.post('/import', strictRateLimiter({ max: 3 }), authMiddleware, ownerOrM
           message: `Berhasil import produk baru dengan ${product.variants.length} varian`
         });
 
-        emitProductCreated(product);
+        emitProductCreated(product, tenantId);
 
       } catch (error: any) {
         let errorMsg = 'Gagal membuat produk';
@@ -1725,8 +1725,8 @@ products.post('/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
       deactivatedCount = result.count;
     }
 
-    // Emit socket events for each product
-    productsToDelete.forEach(id => emitProductDeleted(id));
+    // Emit socket events for each product (scoped to tenant)
+    productsToDelete.forEach(id => emitProductDeleted(id, tenantId));
     
     logger.info('Bulk delete products', {
       tenantId,

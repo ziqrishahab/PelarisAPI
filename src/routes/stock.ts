@@ -220,7 +220,7 @@ stock.post('/adjustment', rateLimiter({ max: 30, windowMs: 5 * 60 * 1000 }), aut
       return { stock: updatedStock, adjustment };
     });
     
-    // Emit socket event for real-time update
+    // Emit socket event for real-time update (scoped to cabang)
     emitStockUpdated({
       productId: stockRecord.productVariant.product.id,
       variantId,
@@ -228,7 +228,7 @@ stock.post('/adjustment', rateLimiter({ max: 30, windowMs: 5 * 60 * 1000 }), aut
       quantity: newQty,
       previousQty,
       adjustmentId: result.adjustment.id
-    });
+    }, cabangId, user.tenantId || undefined);
     
     // Clear stock cache
     const { clearStockCache } = await import('../lib/cache.js');

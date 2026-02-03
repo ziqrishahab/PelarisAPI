@@ -162,8 +162,9 @@ stockTransfers.post('/', rateLimiter({ max: 30 }), authMiddleware, async (c) => 
       context: { user },
     });
 
-    // Emit socket event if completed
+    // Emit socket event if completed (scoped to both cabangs)
     if (isAutoApprove) {
+      // Emit to source cabang
       emitStockUpdated({
         type: 'transfer',
         transferId: result.id,
@@ -171,7 +172,17 @@ stockTransfers.post('/', rateLimiter({ max: 30 }), authMiddleware, async (c) => 
         toCabangId,
         variantId,
         quantity
-      });
+      }, fromCabangId, user.tenantId || undefined);
+      
+      // Also emit to destination cabang
+      emitStockUpdated({
+        type: 'transfer',
+        transferId: result.id,
+        fromCabangId,
+        toCabangId,
+        variantId,
+        quantity
+      }, toCabangId, user.tenantId || undefined);
       
       // Clear stock cache for both cabangs
       const { clearStockCache } = await import('../lib/cache.js');
@@ -304,7 +315,7 @@ stockTransfers.patch('/:id/approve', authMiddleware, async (c) => {
       context: { user },
     });
 
-    // Emit socket event
+    // Emit socket event (scoped to both cabangs)
     emitStockUpdated({
       type: 'transfer',
       transferId: result.id,
@@ -312,7 +323,16 @@ stockTransfers.patch('/:id/approve', authMiddleware, async (c) => {
       toCabangId: transfer.toCabangId,
       variantId: transfer.variantId,
       quantity: transfer.quantity
-    });
+    }, transfer.fromCabangId, user.tenantId || undefined);
+    
+    emitStockUpdated({
+      type: 'transfer',
+      transferId: result.id,
+      fromCabangId: transfer.fromCabangId,
+      toCabangId: transfer.toCabangId,
+      variantId: transfer.variantId,
+      quantity: transfer.quantity
+    }, transfer.toCabangId, user.tenantId || undefined);
 
     logger.info('Stock transfer approved', {
       transferNo: result.transferNo,

@@ -37,14 +37,19 @@ interface TransactionBody {
   cabangId?: string;
 }
 
-// Generate transaction number (INV-YYYYMMDD-XXXX)
+// Generate transaction number (INV-YYYYMMDD-HHMMSS-XXXX)
+// Includes timestamp + random for better uniqueness in high-volume scenarios
 function generateTransactionNo(): string {
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
-  const random = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
-  return `INV-${year}${month}${day}-${random}`;
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  const second = String(date.getSeconds()).padStart(2, '0');
+  const ms = String(date.getMilliseconds()).padStart(3, '0');
+  const random = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `INV-${year}${month}${day}-${hour}${minute}${second}${ms}${random}`;
 }
 
 const transactions = new Hono<{ Variables: Variables }>();
@@ -108,7 +113,7 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
     });
 
     // Create transaction with items and update stock in a database transaction
-    // RACE CONDITION FIX: Stock check + update dalam satu transaction dengan row locking
+    // RACE CONDITION FIX: Stock check + update dalam satu transaction dengan proper row locking
     const transaction = await prisma.$transaction(async (tx) => {
       // Validate items, check stock, and calculate totals INSIDE transaction
       const itemsWithDetails = [];
@@ -117,14 +122,25 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
       for (const item of items) {
         const { productVariantId, quantity, price } = item;
 
-        // Get product variant with stock (with SELECT FOR UPDATE locking)
+        // Lock the stock row first using SELECT FOR UPDATE to prevent concurrent modifications
+        const lockedStocks = await tx.$queryRaw<Array<{ id: string; quantity: number }>>`
+          SELECT s.id, s.quantity 
+          FROM stocks s 
+          WHERE s."productVariantId" = ${productVariantId} 
+          AND s."cabangId" = ${cabangId} 
+          FOR UPDATE
+        `;
+
+        const lockedStock = lockedStocks[0];
+        if (!lockedStock) {
+          throw new Error(`Stok untuk produk ${productVariantId} di cabang ini tidak ditemukan`);
+        }
+
+        // Get product variant details (no locking needed, just for display)
         const variant = await tx.productVariant.findUnique({
           where: { id: productVariantId },
           include: {
-            product: true,
-            stocks: {
-              where: { cabangId }
-            }
+            product: true
           }
         });
 
@@ -133,8 +149,7 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
         }
 
         // Check stock availability (row is locked, preventing concurrent modification)
-        const stock = variant.stocks[0];
-        if (!stock || stock.quantity < quantity) {
+        if (lockedStock.quantity < quantity) {
           throw new Error(`Stok tidak mencukupi untuk ${variant.product.name} (${variant.variantName}: ${variant.variantValue})`);
         }
 
@@ -159,8 +174,8 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
           quantity,
           price,
           subtotal: itemSubtotal,
-          stockId: stock.id,
-          currentStock: stock.quantity
+          stockId: lockedStock.id,
+          currentStock: lockedStock.quantity
         });
       }
 
@@ -245,7 +260,7 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
       return { newTransaction, stockUpdates: itemsWithDetails };
     });
 
-    // Emit stock updates via WebSocket
+    // Emit stock updates via WebSocket (scoped to cabang)
     for (const item of transaction.stockUpdates) {
       emitStockUpdated({
         productVariantId: item.productVariantId,
@@ -253,7 +268,7 @@ transactions.post('/', rateLimiter({ max: 100, windowMs: 5 * 60 * 1000 }), authM
         quantity: item.currentStock - item.quantity,
         previousQuantity: item.currentStock,
         operation: 'subtract'
-      });
+      }, cabangId, user.tenantId || undefined);
     }
 
     // Log transaction
