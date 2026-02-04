@@ -6,16 +6,16 @@
 import { getRedis, isRedisAvailable } from './redis.js';
 import logger from './logger.js';
 
-// In-memory cache fallback (Map with TTL)
-class MemoryCache {
-  private cache: Map<string, { value: any; expiry: number }> = new Map();
+// In-memory cache fallback (Map with TTL) - uses generics for type safety
+class MemoryCache<T = unknown> {
+  private cache: Map<string, { value: T; expiry: number }> = new Map();
 
-  set(key: string, value: any, ttlSeconds: number): void {
+  set(key: string, value: T, ttlSeconds: number): void {
     const expiry = Date.now() + ttlSeconds * 1000;
     this.cache.set(key, { value, expiry });
   }
 
-  get(key: string): any | null {
+  get(key: string): T | null {
     const item = this.cache.get(key);
     if (!item) return null;
     
@@ -48,8 +48,22 @@ class MemoryCache {
 
 const memoryCache = new MemoryCache();
 
+// Store interval reference for graceful shutdown
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
 // Cleanup expired entries every 5 minutes
-setInterval(() => memoryCache.cleanup(), 5 * 60 * 1000);
+cleanupInterval = setInterval(() => memoryCache.cleanup(), 5 * 60 * 1000);
+
+/**
+ * Stop the cache cleanup interval (for graceful shutdown)
+ */
+export function stopCacheCleanup(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+    logger.info('Cache cleanup interval stopped');
+  }
+}
 
 /**
  * Cache TTL constants (in seconds)

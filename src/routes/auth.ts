@@ -51,10 +51,14 @@ auth.post('/register', strictRateLimiter({ max: isDev ? 50 : 5 }), async (c) => 
       if (!finalCabangId && storeName) {
         // If no tenantId yet (public register), create tenant first
         if (!tenantId) {
+          // Generate unique slug with timestamp to avoid collision
+          const baseSlug = storeName?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'toko';
+          const uniqueSlug = `${baseSlug}-${Date.now().toString(36)}`;
+          
           const newTenant = await tx.tenant.create({
             data: {
               name: storeName || 'Toko',
-              slug: branchName?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'tenant',
+              slug: uniqueSlug,
             }
           });
           tenantId = newTenant.id;
@@ -558,6 +562,140 @@ auth.delete('/users/:id', strictRateLimiter({ max: 5 }), authMiddleware, ownerOn
     if (error.code === 'P2025') {
       return c.json({ error: 'User tidak ditemukan' }, 404);
     }
+    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+  }
+});
+
+// Forgot Password - Request reset token
+auth.post('/forgot-password', strictRateLimiter({ max: isDev ? 20 : 3 }), async (c) => {
+  try {
+    const { email } = await c.req.json();
+
+    if (!email) {
+      return c.json({ error: 'Email wajib diisi' }, 400);
+    }
+
+    // Find user by email
+    const user = await prisma.user.findFirst({
+      where: { email }
+    });
+
+    // Always return success to prevent email enumeration
+    if (!user) {
+      logger.info('[Auth] Forgot password request for non-existent email', { email });
+      return c.json({ 
+        message: 'Jika email terdaftar, link reset password akan dikirim',
+        success: true 
+      });
+    }
+
+    // Generate secure random token
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Delete any existing reset tokens for this email
+    await prisma.passwordReset.deleteMany({
+      where: { email }
+    });
+
+    // Create new reset token
+    await prisma.passwordReset.create({
+      data: {
+        email,
+        token,
+        expiresAt
+      }
+    });
+
+    logger.info('[Auth] Password reset token generated', { email, userId: user.id });
+
+    // Return token and user info for frontend to send email via EmailJS
+    return c.json({ 
+      message: 'Jika email terdaftar, link reset password akan dikirim',
+      success: true,
+      // These are returned for EmailJS to send the email
+      resetData: {
+        token,
+        name: user.name,
+        email: user.email
+      }
+    });
+  } catch (error: any) {
+    logError(error, { context: 'Forgot password' });
+    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+  }
+});
+
+// Reset Password - Verify token and update password
+auth.post('/reset-password', strictRateLimiter({ max: isDev ? 20 : 5 }), async (c) => {
+  try {
+    const { token, password } = await c.req.json();
+
+    if (!token || !password) {
+      return c.json({ error: 'Token dan password wajib diisi' }, 400);
+    }
+
+    // Validate password strength
+    if (password.length < 8) {
+      return c.json({ error: 'Password minimal 8 karakter' }, 400);
+    }
+    if (!/[a-z]/.test(password)) {
+      return c.json({ error: 'Password harus mengandung huruf kecil' }, 400);
+    }
+    if (!/[A-Z]/.test(password)) {
+      return c.json({ error: 'Password harus mengandung huruf besar' }, 400);
+    }
+    if (!/[0-9]/.test(password)) {
+      return c.json({ error: 'Password harus mengandung angka' }, 400);
+    }
+
+    // Find valid reset token
+    const resetToken = await prisma.passwordReset.findUnique({
+      where: { token }
+    });
+
+    if (!resetToken) {
+      return c.json({ error: 'Token tidak valid' }, 400);
+    }
+
+    if (resetToken.used) {
+      return c.json({ error: 'Token sudah digunakan' }, 400);
+    }
+
+    if (resetToken.expiresAt < new Date()) {
+      return c.json({ error: 'Token sudah kadaluarsa' }, 400);
+    }
+
+    // Find user
+    const user = await prisma.user.findFirst({
+      where: { email: resetToken.email }
+    });
+
+    if (!user) {
+      return c.json({ error: 'User tidak ditemukan' }, 404);
+    }
+
+    // Update password
+    const hashedPassword = await bcrypt.hash(password, 12);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword }
+    });
+
+    // Mark token as used
+    await prisma.passwordReset.update({
+      where: { token },
+      data: { used: true }
+    });
+
+    logger.info('[Auth] Password reset successful', { email: user.email, userId: user.id });
+
+    return c.json({ 
+      message: 'Password berhasil direset',
+      success: true 
+    });
+  } catch (error: any) {
+    logError(error, { context: 'Reset password' });
     return c.json({ error: 'Terjadi kesalahan server' }, 500);
   }
 });

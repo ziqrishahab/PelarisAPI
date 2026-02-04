@@ -18,8 +18,11 @@ export const ERR = {
   TENANT_REQUIRED: 'Diperlukan scope tenant',
   TOKEN_REQUIRED: 'Token tidak ditemukan',
   TOKEN_INVALID: 'Token tidak valid',
+  CSRF_INVALID: 'CSRF token tidak valid',
   LOGIN_FAILED: 'Email atau password salah',
   ACCOUNT_INACTIVE: 'Akun Anda tidak aktif',
+  OWNER_ONLY: 'Hanya owner yang bisa akses',
+  ACCESS_DENIED: 'Akses ditolak',
   
   // User
   USER_NOT_FOUND: 'User tidak ditemukan',

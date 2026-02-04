@@ -19,8 +19,11 @@ interface RateLimitOptions {
 // In-memory store (fallback when Redis is not available)
 const memoryStore: RateLimitStore = {};
 
+// Store interval reference for graceful shutdown
+let rateLimitCleanupInterval: ReturnType<typeof setInterval> | null = null;
+
 // Clean up expired entries every 5 minutes (only for in-memory)
-setInterval(() => {
+rateLimitCleanupInterval = setInterval(() => {
   if (!isRedisAvailable()) {
     const now = Date.now();
     for (const key in memoryStore) {
@@ -30,6 +33,17 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000);
+
+/**
+ * Stop the rate limit cleanup interval (for graceful shutdown)
+ */
+export function stopRateLimitCleanup(): void {
+  if (rateLimitCleanupInterval) {
+    clearInterval(rateLimitCleanupInterval);
+    rateLimitCleanupInterval = null;
+    logger.info('Rate limit cleanup interval stopped');
+  }
+}
 
 /**
  * Get rate limit data from Redis or memory

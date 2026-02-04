@@ -4,6 +4,7 @@ import { authMiddleware, ownerOnly, ownerOrManager } from '../middleware/auth.js
 import { rateLimiter } from '../middleware/rate-limit.js';
 import { logError } from '../lib/logger.js';
 import { validate, updateAppSettingsSchema, updatePrinterSettingsSchema, updateSettingsSchema } from '../lib/validators.js';
+import { ERR, MSG } from '../lib/messages.js';
 
 const settings = new Hono();
 
@@ -15,7 +16,7 @@ settings.get('/app', authMiddleware, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     // Get app settings from Settings model (key-value pairs) - tenant-scoped
@@ -39,7 +40,7 @@ settings.get('/app', authMiddleware, async (c) => {
     return c.json(appSettings);
   } catch (error) {
     logError(error, { context: 'Get app settings' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -51,7 +52,7 @@ settings.put('/app', rateLimiter({ max: 10 }), authMiddleware, ownerOnly, async 
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const body = await c.req.json();
@@ -96,11 +97,11 @@ settings.put('/app', rateLimiter({ max: 10 }), authMiddleware, ownerOnly, async 
     await Promise.all(updates);
 
     return c.json({ 
-      message: 'App settings berhasil diupdate'
+      message: MSG.UPDATED
     });
   } catch (error) {
     logError(error, { context: 'Update app settings' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -113,7 +114,7 @@ settings.get('/printer', authMiddleware, async (c) => {
     const cabangId = c.req.query('cabangId');
 
     if (!cabangId) {
-      return c.json({ error: 'cabangId diperlukan' }, 400);
+      return c.json({ error: ERR.CABANG_ID_REQUIRED }, 400);
     }
 
     // Get cabang with tenant to fetch tenant name
@@ -123,7 +124,7 @@ settings.get('/printer', authMiddleware, async (c) => {
     });
 
     if (!cabang) {
-      return c.json({ error: 'Cabang tidak ditemukan' }, 404);
+      return c.json({ error: ERR.CABANG_NOT_FOUND }, 404);
     }
 
     let printerSettings = await prisma.printerSettings.findUnique({
@@ -149,7 +150,7 @@ settings.get('/printer', authMiddleware, async (c) => {
     return c.json(response);
   } catch (error) {
     logError(error, { context: 'Get printer settings' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -172,7 +173,7 @@ settings.put('/printer', rateLimiter({ max: 10 }), authMiddleware, ownerOrManage
 
     if (!cabangExists) {
       return c.json({
-        error: 'Cabang tidak ditemukan',
+        error: ERR.CABANG_NOT_FOUND,
         detail: `cabangId ${cabangId} tidak ada di database`
       }, 404);
     }
@@ -184,10 +185,10 @@ settings.put('/printer', rateLimiter({ max: 10 }), authMiddleware, ownerOrManage
       create: { cabangId, ...data }
     });
 
-    return c.json({ message: 'Printer settings berhasil disimpan', settings: printerSettings });
+    return c.json({ message: MSG.UPDATED, settings: printerSettings });
   } catch (error) {
     logError(error, { context: 'Update printer settings' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -200,7 +201,7 @@ settings.get('/', authMiddleware, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const allSettings = await prisma.settings.findMany({
@@ -216,7 +217,7 @@ settings.get('/', authMiddleware, async (c) => {
     return c.json(settingsObj);
   } catch (error) {
     logError(error, { context: 'Get settings' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -227,7 +228,7 @@ settings.put('/', authMiddleware, ownerOnly, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const body = await c.req.json();
@@ -248,10 +249,10 @@ settings.put('/', authMiddleware, ownerOnly, async (c) => {
 
     await Promise.all(promises);
 
-    return c.json({ message: 'Settings berhasil diupdate' });
+    return c.json({ message: MSG.UPDATED });
   } catch (error) {
     logError(error, { context: 'Update settings' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 
@@ -262,7 +263,7 @@ settings.get('/:key', authMiddleware, async (c) => {
     const tenantId = user.tenantId;
     
     if (!tenantId) {
-      return c.json({ error: 'Tenant scope required' }, 400);
+      return c.json({ error: ERR.TENANT_REQUIRED }, 400);
     }
 
     const key = c.req.param('key');
@@ -271,13 +272,13 @@ settings.get('/:key', authMiddleware, async (c) => {
     });
 
     if (!setting) {
-      return c.json({ error: 'Setting tidak ditemukan' }, 404);
+      return c.json({ error: ERR.NOT_FOUND }, 404);
     }
 
     return c.json({ key: setting.key, value: setting.value });
   } catch (error) {
     logError(error, { context: 'Get setting by key' });
-    return c.json({ error: 'Terjadi kesalahan server' }, 500);
+    return c.json({ error: ERR.SERVER_ERROR }, 500);
   }
 });
 

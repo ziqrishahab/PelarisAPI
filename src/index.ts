@@ -31,6 +31,8 @@ import { IS_DEV } from './config/index.js';
 // Import routes
 import auth from './routes/auth.js';
 import products from './routes/products.js';
+import categories from './routes/categories.js';
+import productsImportExport from './routes/products-import-export.js';
 import transactions from './routes/transactions.js';
 import cabang from './routes/cabang.js';
 import settings from './routes/settings.js';
@@ -204,6 +206,8 @@ app.get('/health/full', async (c) => {
 // API Routes (v1)
 app.route('/api/v1/auth', auth);
 app.route('/api/v1/products', products);
+app.route('/api/v1/categories', categories);
+app.route('/api/v1/products', productsImportExport);
 app.route('/api/v1/transactions', transactions);
 app.route('/api/v1/cabang', cabang);
 app.route('/api/v1/settings', settings);
@@ -218,6 +222,8 @@ app.route('/api/v1/tenants', tenants);
 // Legacy API routes (backward compatibility - will be deprecated)
 app.route('/api/auth', auth);
 app.route('/api/products', products);
+app.route('/api/categories', categories);
+app.route('/api/products', productsImportExport);
 app.route('/api/transactions', transactions);
 app.route('/api/cabang', cabang);
 app.route('/api/settings', settings);

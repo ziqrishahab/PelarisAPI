@@ -1,6 +1,7 @@
 import { Context, Next } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { verifyToken } from '../lib/jwt.js';
+import { ERR } from '../lib/messages.js';
 
 export interface AuthUser {
   userId: string;
@@ -29,38 +30,38 @@ export const authMiddleware = async (c: Context, next: Next): Promise<Response |
     const token = bearerToken || cookieToken;
 
     if (!token) {
-      return c.json({ error: 'Token tidak ditemukan' }, 401);
+      return c.json({ error: ERR.TOKEN_REQUIRED }, 401);
     }
 
     const decoded = verifyToken(token);
 
     if (!decoded) {
-      return c.json({ error: 'Token tidak valid' }, 401);
+      return c.json({ error: ERR.TOKEN_INVALID }, 401);
     }
 
     // CSRF protection for state-changing requests when csrfToken is present in payload
     const method = c.req.method.toUpperCase();
     const isSafeMethod = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
-    const csrfToken = (decoded as any).csrfToken as string | undefined;
+    const csrfToken = (decoded as AuthUser & { csrfToken?: string }).csrfToken;
     const csrfHeader = c.req.header('x-csrf-token');
 
     if (!isSafeMethod && csrfToken) {
       if (!csrfHeader || csrfHeader !== csrfToken) {
-        return c.json({ error: 'CSRF token tidak valid' }, 403);
+        return c.json({ error: ERR.CSRF_INVALID }, 403);
       }
     }
 
     c.set('user', decoded);
     await next();
   } catch {
-    return c.json({ error: 'Unauthorized' }, 401);
+    return c.json({ error: ERR.UNAUTHORIZED }, 401);
   }
 };
 
 export const ownerOnly = async (c: Context, next: Next): Promise<Response | void> => {
   const user = c.get('user');
   if (user.role !== 'OWNER') {
-    return c.json({ error: 'Hanya owner yang bisa akses' }, 403);
+    return c.json({ error: ERR.OWNER_ONLY }, 403);
   }
   await next();
 };
@@ -68,7 +69,7 @@ export const ownerOnly = async (c: Context, next: Next): Promise<Response | void
 export const ownerOrManager = async (c: Context, next: Next): Promise<Response | void> => {
   const user = c.get('user');
   if (user.role !== 'OWNER' && user.role !== 'MANAGER') {
-    return c.json({ error: 'Akses ditolak' }, 403);
+    return c.json({ error: ERR.ACCESS_DENIED }, 403);
   }
   await next();
 };

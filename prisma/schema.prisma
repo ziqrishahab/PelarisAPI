@@ -158,6 +158,19 @@ model User {
   @@map("users")
 }
 
+model PasswordReset {
+  id        String   @id @default(cuid())
+  email     String   @db.VarChar(255)
+  token     String   @unique @db.VarChar(255)
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([token])
+  @@map("password_resets")
+}
+
 enum UserRole {
   OWNER
   MANAGER
