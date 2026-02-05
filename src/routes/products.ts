@@ -747,6 +747,11 @@ products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
     });
 
     emitProductUpdated(product, tenantId);
+    
+    // Clear product cache
+    const { clearProductCache } = await import('../lib/cache.js');
+    await clearProductCache(tenantId, product?.id);
+    
     return c.json(product);
   } catch (error: any) {
     logError(error, { context: 'Update product error:' });
@@ -757,8 +762,8 @@ products.put('/:id', authMiddleware, ownerOrManager, async (c) => {
 });
 
 // Delete product (Owner/Manager only)
-// Rate limited: 20 deletions per 15 minutes
-products.delete('/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOrManager, async (c) => {
+// Supports ?force=true query parameter to force delete products with transaction history
+products.delete('/:id', authMiddleware, ownerOrManager, async (c) => {
   try {
     const user = c.get('user');
     const tenantId = user.tenantId;
@@ -768,6 +773,7 @@ products.delete('/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOrManager
     }
 
     const id = c.req.param('id');
+    const forceDelete = c.req.query('force') === 'true';
     
     const product = await prisma.product.findUnique({
       where: { id },
@@ -784,21 +790,53 @@ products.delete('/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOrManager
 
     const hasTransactions = product.variants.some(v => v.transactionItems.length > 0);
 
-    if (hasTransactions) {
+    // Products with transactions are deactivated unless force=true is passed
+    if (hasTransactions && !forceDelete) {
       const updatedProduct = await prisma.product.update({
         where: { id },
         data: { isActive: false }
       });
 
       emitProductUpdated(updatedProduct, tenantId);
+      
+      // Clear product cache
+      const { clearProductCache } = await import('../lib/cache.js');
+      await clearProductCache(tenantId, updatedProduct?.id);
+      
       return c.json({ 
         message: 'Product has transaction history. Product has been deactivated instead of deleted.',
         action: 'deactivated'
       });
     }
 
+    // Force delete: remove transaction items first, then product
+    if (hasTransactions && forceDelete) {
+      await prisma.$transaction(async (tx) => {
+        // Delete transaction items for all variants
+        for (const variant of product.variants) {
+          await tx.transactionItem.deleteMany({
+            where: { productVariantId: variant.id }
+          });
+        }
+        // Delete the product (cascades to variants, stocks, etc.)
+        await tx.product.delete({ where: { id } });
+      });
+      
+      emitProductDeleted(id, tenantId);
+      
+      // Clear product cache
+      const { clearProductCache } = await import('../lib/cache.js');
+      await clearProductCache(tenantId, id);
+      
+      return c.json({ message: 'Product force deleted with transaction history', action: 'force_deleted' });
+    }
+
     await prisma.product.delete({ where: { id } });
     emitProductDeleted(id, tenantId);
+    
+    // Clear product cache
+    const { clearProductCache } = await import('../lib/cache.js');
+    await clearProductCache(tenantId, id);
 
     return c.json({ message: 'Product deleted successfully', action: 'deleted' });
   } catch (error: any) {
@@ -811,6 +849,7 @@ products.delete('/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOrManager
 // ==================== BULK OPERATIONS ====================
 
 // Bulk delete products
+// Supports force parameter in body to force delete products with transaction history
 products.post('/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
   try {
     const user = c.get('user');
@@ -821,7 +860,7 @@ products.post('/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
     }
 
     const body = await c.req.json();
-    const { productIds } = body as { productIds: string[] };
+    const { productIds, force } = body as { productIds: string[]; force?: boolean };
 
     if (!Array.isArray(productIds) || productIds.length === 0) {
       return c.json({ error: 'Product IDs harus berupa array dan tidak boleh kosong' }, 400);
@@ -853,7 +892,42 @@ products.post('/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
       }, 404);
     }
 
-    // Separate products with and without transactions
+    // Force delete all including those with transactions (only when force=true)
+    if (force) {
+      await prisma.$transaction(async (tx) => {
+        for (const product of productsList) {
+          // Delete transaction items for all variants
+          for (const variant of product.variants) {
+            await tx.transactionItem.deleteMany({
+              where: { productVariantId: variant.id }
+            });
+          }
+        }
+        // Delete all products
+        await tx.product.deleteMany({
+          where: { id: { in: productIds }, tenantId }
+        });
+      });
+
+      productIds.forEach(id => emitProductDeleted(id, tenantId));
+      
+      // Clear product cache
+      const { clearProductCache } = await import('../lib/cache.js');
+      await clearProductCache(tenantId);
+      
+      return c.json({
+        message: 'Bulk force delete completed',
+        total: productIds.length,
+        deleted: productIds.length,
+        deactivated: 0,
+        details: {
+          deletedIds: productIds,
+          deactivatedIds: [],
+        }
+      });
+    }
+
+    // Normal behavior: separate products with and without transactions
     const productsWithTransactions: string[] = [];
     const productsToDelete: string[] = [];
 
@@ -893,6 +967,10 @@ products.post('/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
 
     // Emit socket events for each product (scoped to tenant)
     productsToDelete.forEach(id => emitProductDeleted(id, tenantId));
+    
+    // Clear product cache
+    const { clearProductCache } = await import('../lib/cache.js');
+    await clearProductCache(tenantId);
     
     logger.info('Bulk delete products', {
       tenantId,

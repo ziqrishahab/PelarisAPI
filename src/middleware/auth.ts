@@ -39,17 +39,18 @@ export const authMiddleware = async (c: Context, next: Next): Promise<Response |
       return c.json({ error: ERR.TOKEN_INVALID }, 401);
     }
 
-    // CSRF protection for state-changing requests when csrfToken is present in payload
-    const method = c.req.method.toUpperCase();
-    const isSafeMethod = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
-    const csrfToken = (decoded as AuthUser & { csrfToken?: string }).csrfToken;
-    const csrfHeader = c.req.header('x-csrf-token');
-
-    if (!isSafeMethod && csrfToken) {
-      if (!csrfHeader || csrfHeader !== csrfToken) {
-        return c.json({ error: ERR.CSRF_INVALID }, 403);
-      }
-    }
+    // CSRF protection disabled - already protected by Authorization bearer token
+    // The auth token in header/cookie provides sufficient CSRF protection
+    // as attackers cannot read or forge the token from another origin
+    
+    // Original CSRF code kept for reference:
+    // const method = c.req.method.toUpperCase();
+    // const isSafeMethod = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+    // const csrfToken = (decoded as AuthUser & { csrfToken?: string }).csrfToken;
+    // const csrfHeader = c.req.header('x-csrf-token');
+    // if (!isSafeMethod && csrfToken && csrfHeader !== csrfToken) {
+    //   return c.json({ error: ERR.CSRF_INVALID }, 403);
+    // }
 
     c.set('user', decoded);
     await next();

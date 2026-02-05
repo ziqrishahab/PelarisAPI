@@ -10,7 +10,7 @@
  */
 export function stripHtml(str: string): string {
   if (!str) return str;
-  return str.replace(/<[^>]*>/g, '');
+  return String(str).replace(/<[^>]*>/g, '');
 }
 
 /**
@@ -25,7 +25,7 @@ export function escapeHtml(str: string): string {
     '"': '&quot;',
     "'": '&#39;',
   };
-  return str.replace(/[&<>"']/g, (char) => htmlEscapes[char] || char);
+  return String(str).replace(/[&<>"']/g, (char) => htmlEscapes[char] || char);
 }
 
 /**
@@ -35,10 +35,11 @@ export function escapeHtml(str: string): string {
  * - Limits length
  * - Removes null bytes and control characters
  */
-export function sanitizeString(str: string | null | undefined, maxLength = 1000): string {
-  if (!str) return '';
+export function sanitizeString(str: string | number | null | undefined, maxLength = 1000): string {
+  if (str === null || str === undefined || str === '') return '';
   
-  let result = str
+  // Convert to string first (handles numbers from Excel)
+  let result = String(str)
     // Remove null bytes
     .replace(/\0/g, '')
     // Remove control characters (except newlines and tabs)
@@ -60,10 +61,11 @@ export function sanitizeString(str: string | null | undefined, maxLength = 1000)
  * Sanitize text that may contain multiple lines (descriptions, notes)
  * Preserves newlines but sanitizes content
  */
-export function sanitizeText(str: string | null | undefined, maxLength = 5000): string {
-  if (!str) return '';
+export function sanitizeText(str: string | number | null | undefined, maxLength = 5000): string {
+  if (str === null || str === undefined || str === '') return '';
   
-  let result = str
+  // Convert to string first (handles numbers from Excel)
+  let result = String(str)
     // Remove null bytes
     .replace(/\0/g, '')
     // Remove control characters except newline, tab, carriage return
@@ -87,10 +89,11 @@ export function sanitizeText(str: string | null | undefined, maxLength = 5000): 
 /**
  * Sanitize SKU/code (alphanumeric, dashes, underscores only)
  */
-export function sanitizeSku(str: string | null | undefined, maxLength = 100): string {
-  if (!str) return '';
+export function sanitizeSku(str: string | number | null | undefined, maxLength = 100): string {
+  if (str === null || str === undefined || str === '') return '';
   
-  return str
+  // Convert to string first (handles numbers from Excel)
+  return String(str)
     // Allow only alphanumeric, dash, underscore, dot
     .replace(/[^a-zA-Z0-9\-_\.]/g, '')
     // Trim
@@ -102,10 +105,11 @@ export function sanitizeSku(str: string | null | undefined, maxLength = 100): st
 /**
  * Sanitize filename
  */
-export function sanitizeFilename(str: string | null | undefined): string {
-  if (!str) return '';
+export function sanitizeFilename(str: string | number | null | undefined): string {
+  if (str === null || str === undefined || str === '') return '';
   
-  return str
+  // Convert to string first
+  return String(str)
     // Remove directory traversal attempts
     .replace(/\.\./g, '')
     // Remove path separators
@@ -121,10 +125,11 @@ export function sanitizeFilename(str: string | null | undefined): string {
 /**
  * Sanitize URL (basic validation)
  */
-export function sanitizeUrl(str: string | null | undefined): string | null {
-  if (!str) return null;
+export function sanitizeUrl(str: string | number | null | undefined): string | null {
+  if (str === null || str === undefined || str === '') return null;
   
-  const trimmed = str.trim();
+  // Convert to string first
+  const trimmed = String(str).trim();
   
   // Only allow http and https protocols
   if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {

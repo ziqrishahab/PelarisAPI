@@ -136,13 +136,15 @@ app.use('*', async (c, next) => {
 });
 
 // Global Rate Limiter 
-// Dev mode: 1000 requests per 15 minutes (effectively no limit)
+// Dev mode: Disabled (no limit) for easier testing
 // Production: 100 requests per 15 minutes per IP
 // Skipped for health check and root endpoint
-app.use('/api/*', rateLimiter({
-  windowMs: 15 * 60 * 1000,  // 15 minutes
-  max: IS_DEV ? 1000 : 100,  // Higher limit in dev for E2E testing
-}));
+if (!IS_DEV) {
+  app.use('/api/*', rateLimiter({
+    windowMs: 15 * 60 * 1000,  // 15 minutes
+    max: 100,
+  }));
+}
 
 // Root endpoint
 app.get('/', (c) => {
@@ -205,9 +207,9 @@ app.get('/health/full', async (c) => {
 
 // API Routes (v1)
 app.route('/api/v1/auth', auth);
+app.route('/api/v1/products', productsImportExport); // Must be before products to avoid /:id catching /template
 app.route('/api/v1/products', products);
 app.route('/api/v1/categories', categories);
-app.route('/api/v1/products', productsImportExport);
 app.route('/api/v1/transactions', transactions);
 app.route('/api/v1/cabang', cabang);
 app.route('/api/v1/settings', settings);
@@ -221,9 +223,9 @@ app.route('/api/v1/tenants', tenants);
 
 // Legacy API routes (backward compatibility - will be deprecated)
 app.route('/api/auth', auth);
+app.route('/api/products', productsImportExport); // Must be before products to avoid /:id catching /template
 app.route('/api/products', products);
 app.route('/api/categories', categories);
-app.route('/api/products', productsImportExport);
 app.route('/api/transactions', transactions);
 app.route('/api/cabang', cabang);
 app.route('/api/settings', settings);

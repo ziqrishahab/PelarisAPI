@@ -209,8 +209,8 @@ importExport.get('/export', authMiddleware, async (c) => {
 });
 
 // Import Products from Excel - Full implementation with Hono multipart
-// Rate limited: 3 imports per 15 minutes (heavy operation)
-importExport.post('/import', strictRateLimiter({ max: 3 }), authMiddleware, ownerOrManager, async (c) => {
+// Rate limiting removed for now - rely on file size limit and auth
+importExport.post('/import', authMiddleware, ownerOrManager, async (c) => {
   let tempFilePath: string | null = null;
   
   // File size limit: 10MB
@@ -642,6 +642,12 @@ importExport.post('/import', strictRateLimiter({ max: 3 }), authMiddleware, owne
 
     const warnings = errors.filter(e => e.type === 'warning');
     const actualErrors = errors.filter(e => e.type !== 'warning');
+    
+    // Clear product cache after import
+    if (success.length > 0) {
+      const { clearProductCache } = await import('../lib/cache.js');
+      await clearProductCache(tenantId);
+    }
 
     return c.json({
       success: success.length > 0,
