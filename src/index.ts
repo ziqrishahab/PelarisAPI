@@ -206,9 +206,26 @@ app.get('/health/full', async (c) => {
   return c.json(checks, hasError ? 503 : 200);
 });
 
-// API Routes (v1)
+// API Routes (used by web frontend)
+app.route('/api/auth', auth);
+app.route('/api/products', productsImportExport); // Must be before products to avoid /:id catching /template
+app.route('/api/products', products);
+app.route('/api/categories', categories);
+app.route('/api/transactions', transactions);
+app.route('/api/cabang', cabang);
+app.route('/api/settings', settings);
+app.route('/api/sync', sync);
+app.route('/api/returns', returns);
+app.route('/api/stock-transfers', stockTransfers);
+app.route('/api/backup', backup);
+app.route('/api/stock', stock);
+app.route('/api/channels', channels);
+app.route('/api/tenants', tenants);
+app.route('/api/customers', customers);
+
+// API Routes v1 (used by Flutter mobile app)
 app.route('/api/v1/auth', auth);
-app.route('/api/v1/products', productsImportExport); // Must be before products to avoid /:id catching /template
+app.route('/api/v1/products', productsImportExport);
 app.route('/api/v1/products', products);
 app.route('/api/v1/categories', categories);
 app.route('/api/v1/transactions', transactions);
@@ -222,77 +239,6 @@ app.route('/api/v1/stock', stock);
 app.route('/api/v1/channels', channels);
 app.route('/api/v1/tenants', tenants);
 app.route('/api/v1/customers', customers);
-
-// Legacy API routes - DEPRECATED (will be removed on 2026-08-01)
-// Add deprecation warning header to all legacy routes
-app.use('/api/auth/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/auth instead. Will be removed 2026-08-01');
-});
-app.use('/api/products/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/products instead. Will be removed 2026-08-01');
-});
-app.use('/api/categories/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/categories instead. Will be removed 2026-08-01');
-});
-app.use('/api/transactions/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/transactions instead. Will be removed 2026-08-01');
-});
-app.use('/api/cabang/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/cabang instead. Will be removed 2026-08-01');
-});
-app.use('/api/settings/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/settings instead. Will be removed 2026-08-01');
-});
-app.use('/api/sync/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/sync instead. Will be removed 2026-08-01');
-});
-app.use('/api/returns/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/returns instead. Will be removed 2026-08-01');
-});
-app.use('/api/stock-transfers/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/stock-transfers instead. Will be removed 2026-08-01');
-});
-app.use('/api/backup/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/backup instead. Will be removed 2026-08-01');
-});
-app.use('/api/stock/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/stock instead. Will be removed 2026-08-01');
-});
-app.use('/api/channels/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/channels instead. Will be removed 2026-08-01');
-});
-app.use('/api/tenants/*', async (c, next) => {
-  await next();
-  c.res.headers.set('X-Deprecation-Warning', 'This endpoint is deprecated. Use /api/v1/tenants instead. Will be removed 2026-08-01');
-});
-
-// Legacy route handlers (backward compatibility)
-app.route('/api/auth', auth);
-app.route('/api/products', productsImportExport);
-app.route('/api/products', products);
-app.route('/api/categories', categories);
-app.route('/api/transactions', transactions);
-app.route('/api/cabang', cabang);
-app.route('/api/settings', settings);
-app.route('/api/sync', sync);
-app.route('/api/returns', returns);
-app.route('/api/stock-transfers', stockTransfers);
-app.route('/api/backup', backup);
-app.route('/api/stock', stock);
-app.route('/api/channels', channels);
-app.route('/api/tenants', tenants);
 
 // Error handling
 app.onError(async (err, c) => {

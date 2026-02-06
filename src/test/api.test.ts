@@ -36,7 +36,7 @@ describe('Product API Tests', () => {
   });
 
   it('should create a product', async () => {
-    const response = await fetch('http://localhost:5100/api/v1/products', {
+    const response = await fetch('http://localhost:5100/api/products', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -64,7 +64,7 @@ describe('Product API Tests', () => {
   });
 
   it('should get product list', async () => {
-    const response = await fetch('http://localhost:5100/api/v1/products', {
+    const response = await fetch('http://localhost:5100/api/products', {
       headers: { Authorization: `Bearer ${authToken}` },
     });
 
@@ -74,7 +74,7 @@ describe('Product API Tests', () => {
   });
 
   it('should update product', async () => {
-    const response = await fetch(`http://localhost:5100/api/v1/products/${productId}`, {
+    const response = await fetch(`http://localhost:5100/api/products/${productId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -91,7 +91,7 @@ describe('Product API Tests', () => {
   });
 
   it('should delete product', async () => {
-    const response = await fetch(`http://localhost:5100/api/v1/products/${productId}`, {
+    const response = await fetch(`http://localhost:5100/api/products/${productId}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${authToken}` },
     });
