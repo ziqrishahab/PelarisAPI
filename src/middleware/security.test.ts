@@ -3,8 +3,6 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Hono } from 'hono';
 import { security, securityHeaders, removeServerHeaders } from './security';
 
-console.log('[TEST] Starting security middleware tests...');
-
 describe('Security Middleware', () => {
   describe('security()', () => {
     let app: Hono;
@@ -136,5 +134,3 @@ describe('Security Middleware', () => {
     });
   });
 });
-
-console.log('[PASS] Security middleware tests completed');

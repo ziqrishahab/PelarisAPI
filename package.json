@@ -9,14 +9,12 @@
     "build": "npx prisma generate && tsc",
     "db:push": "npx prisma db push",
     "db:migrate": "npx prisma migrate deploy",
+    "db:seed": "node prisma/seed.cjs",
     "postinstall": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage"
-  },
-  "prisma": {
-    "seed": "node prisma/seed.cjs"
   },
   "keywords": [],
   "author": "",

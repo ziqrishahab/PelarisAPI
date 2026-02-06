@@ -15,41 +15,41 @@ datasource db {
 
 // Channel Type enum
 enum ChannelType {
-  POS         // Point of Sale (built-in)
+  POS // Point of Sale (built-in)
   MARKETPLACE // Tokopedia, Shopee, Lazada, etc
-  WEBSITE     // E-commerce website sendiri
-  SOCIAL      // WhatsApp, Instagram, etc
-  OTHER       // Manual input, etc
+  WEBSITE // E-commerce website sendiri
+  SOCIAL // WhatsApp, Instagram, etc
+  OTHER // Manual input, etc
 }
 
 // Unified Transaction Status
 enum TransactionStatus {
-  PENDING     // Menunggu pembayaran/konfirmasi
-  ONPROCESS   // Sedang diproses/dikemas
-  SHIPPED     // Dalam pengiriman
-  COMPLETED   // Selesai
-  CANCELLED   // Dibatalkan
+  PENDING // Menunggu pembayaran/konfirmasi
+  ONPROCESS // Sedang diproses/dikemas
+  SHIPPED // Dalam pengiriman
+  COMPLETED // Selesai
+  CANCELLED // Dibatalkan
 }
 
 // Sales Channel - configurable marketplace/channel
 model SalesChannel {
-  id           String      @id @default(cuid())
-  code         String      @unique @db.VarChar(50)  // "POS", "TOKOPEDIA", "SHOPEE", etc
-  name         String      @db.VarChar(100)          // Display name
-  type         ChannelType @default(MARKETPLACE)
-  icon         String?     @db.VarChar(255)          // Icon name atau URL
-  color        String?     @db.VarChar(20)           // Brand color hex
-  isActive     Boolean     @default(true)
-  isBuiltIn    Boolean     @default(false) // POS = true
-  
+  id        String      @id @default(cuid())
+  code      String      @unique @db.VarChar(50) // "POS", "TOKOPEDIA", "SHOPEE", etc
+  name      String      @db.VarChar(100) // Display name
+  type      ChannelType @default(MARKETPLACE)
+  icon      String?     @db.VarChar(255) // Icon name atau URL
+  color     String?     @db.VarChar(20) // Brand color hex
+  isActive  Boolean     @default(true)
+  isBuiltIn Boolean     @default(false) // POS = true
+
   // Integration config (encrypted in production)
-  apiConfig    Json?       // { apiKey, secretKey, shopId, refreshToken, etc }
-  
+  apiConfig Json? // { apiKey, secretKey, shopId, refreshToken, etc }
+
   // Field mapping for data transformation
-  fieldMapping Json?       // { "orderId": "order_sn", "status": "order_status" }
-  
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  fieldMapping Json? // { "orderId": "order_sn", "status": "order_status" }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   transactions  Transaction[]
   channelStocks ChannelStock[]
@@ -64,21 +64,20 @@ model ChannelStock {
   channelId        String
   productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
   productVariantId String
-  
-  allocatedQty     Int            @default(0)  // Stock dialokasikan ke channel ini
-  reservedQty      Int            @default(0)  // Stock di-reserve (checkout tapi belum bayar)
-  soldQty          Int            @default(0)  // Total terjual via channel ini
-  
-  isActive         Boolean        @default(true)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+
+  allocatedQty Int @default(0) // Stock dialokasikan ke channel ini
+  reservedQty  Int @default(0) // Stock di-reserve (checkout tapi belum bayar)
+  soldQty      Int @default(0) // Total terjual via channel ini
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([channelId, productVariantId])
   @@index([channelId])
   @@index([productVariantId])
   @@map("channel_stocks")
 }
-
 
 // ==================== MULTI-TENANT ====================
 
@@ -92,11 +91,12 @@ model Tenant {
   updatedAt        DateTime  @updatedAt
 
   users      User[]
+  customers  Customer[]
   cabangs    Cabang[]
   categories Category[]
   products   Product[]
   settings   Settings[]
-  
+
   @@map("tenants")
 }
 
@@ -107,10 +107,10 @@ model AuditLog {
   cabangId    String?
   userId      String?
   action      String   @db.VarChar(100) // e.g. "STOCK_ADJUSTMENT", "RETURN_APPROVED"
-  entityType  String   @db.VarChar(50)  // e.g. "Stock", "Return", "User"
-  entityId    String   @db.VarChar(50)  // e.g. stockAdjustmentId, returnId, userId
+  entityType  String   @db.VarChar(50) // e.g. "Stock", "Return", "User"
+  entityId    String   @db.VarChar(50) // e.g. stockAdjustmentId, returnId, userId
   description String?  @db.VarChar(500) // Human readable description
-  metadata    Json?    // Extra data snapshot
+  metadata    Json? // Extra data snapshot
   ip          String?  @db.VarChar(50)
   createdAt   DateTime @default(now())
 
@@ -125,30 +125,30 @@ model AuditLog {
 
 // User Management
 model User {
-  id        String   @id @default(cuid())
+  id       String @id @default(cuid())
   // Tenant relation
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  tenantId  String
-  
-  email     String   @unique @db.VarChar(255)
-  password  String   @db.VarChar(255)
-  name      String   @db.VarChar(100)
-  role      UserRole @default(KASIR)
-  cabang    Cabang?  @relation(fields: [cabangId], references: [id])
-  cabangId  String?
-  
-  // Multi-cabang access (ADMIN/MANAGER can access all cabangs if true)
-  hasMultiCabangAccess Boolean @default(false)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
 
-  transactions       Transaction[]
-  processedReturns   Return[]
-  requestedOrders    Order[]          @relation("RequestedOrders")
-  processedOrders    Order[]          @relation("ProcessedOrders")
-  stockTransfers     StockTransfer[]
-  stockAdjustments   StockAdjustment[]
+  email    String   @unique @db.VarChar(255)
+  password String   @db.VarChar(255)
+  name     String   @db.VarChar(100)
+  role     UserRole @default(KASIR)
+  cabang   Cabang?  @relation(fields: [cabangId], references: [id])
+  cabangId String?
+
+  // Multi-cabang access (ADMIN/MANAGER can access all cabangs if true)
+  hasMultiCabangAccess Boolean  @default(false)
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  transactions             Transaction[]
+  processedReturns         Return[]
+  requestedOrders          Order[]           @relation("RequestedOrders")
+  processedOrders          Order[]           @relation("ProcessedOrders")
+  stockTransfers           StockTransfer[]
+  stockAdjustments         StockAdjustment[]
   recordedCashTransactions CashTransaction[]
 
   @@unique([tenantId, email])
@@ -156,6 +156,37 @@ model User {
   @@index([cabangId])
   @@index([tenantId, isActive])
   @@map("users")
+}
+
+// Customer (Pembeli - data eksternal, tidak login)
+model Customer {
+  id       String @id @default(cuid())
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  // Basic Info
+  name    String  @db.VarChar(100)
+  phone   String? @db.VarChar(20)
+  email   String? @db.VarChar(255)
+  address String? @db.VarChar(500)
+
+  // Loyalty & Stats
+  totalSpent  Float   @default(0) // Total belanja sepanjang waktu
+  totalOrders Int     @default(0) // Jumlah transaksi
+  points      Int     @default(0) // Loyalty points (future)
+  notes       String? @db.VarChar(500) // Catatan khusus customer
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@index([tenantId, name])
+  @@index([tenantId, isActive])
+  @@map("customers")
 }
 
 model PasswordReset {
@@ -180,31 +211,31 @@ enum UserRole {
 
 // Return/Refund Management
 model Return {
-  id              String       @id @default(cuid())
-  returnNo        String       @unique @db.VarChar(50) // RET-20251124-0001
-  transaction     Transaction  @relation(fields: [transactionId], references: [id])
+  id              String        @id @default(cuid())
+  returnNo        String        @unique @db.VarChar(50) // RET-20251124-0001
+  transaction     Transaction   @relation(fields: [transactionId], references: [id])
   transactionId   String
-  cabang          Cabang       @relation(fields: [cabangId], references: [id])
+  cabang          Cabang        @relation(fields: [cabangId], references: [id])
   cabangId        String
-  processedBy     User         @relation(fields: [processedById], references: [id])
+  processedBy     User          @relation(fields: [processedById], references: [id])
   processedById   String
   reason          ReturnReason
-  reasonDetail    String?      @db.VarChar(500) // Additional details about the reason
-  notes           String?      @db.VarChar(500)
+  reasonDetail    String?       @db.VarChar(500) // Additional details about the reason
+  notes           String?       @db.VarChar(500)
   subtotal        Float // Total nilai return
   refundMethod    PaymentMethod
   refundAmount    Float
-  status          ReturnStatus @default(PENDING)
-  approvedBy      String?      @db.VarChar(50) // Manager yang approve
+  status          ReturnStatus  @default(PENDING)
+  approvedBy      String?       @db.VarChar(50) // Manager yang approve
   approvedAt      DateTime?
-  returnType      String?      @db.VarChar(20) // 'EXCHANGE' or 'REFUND'
-  priceDifference Float?       // For exchanges: difference between old and new items
-  isOverdue       Boolean      @default(false)
-  managerOverride Boolean      @default(false)
-  photoUrls       String[]     @default([])
-  conditionNote   String?      @db.VarChar(500)
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  returnType      String?       @db.VarChar(20) // 'EXCHANGE' or 'REFUND'
+  priceDifference Float? // For exchanges: difference between old and new items
+  isOverdue       Boolean       @default(false)
+  managerOverride Boolean       @default(false)
+  photoUrls       String[]      @default([])
+  conditionNote   String?       @db.VarChar(500)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   items            ReturnItem[]
   exchangeItems    ExchangeItem[]
@@ -224,8 +255,8 @@ model ExchangeItem {
   returnId         String
   productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
   productVariantId String
-  productName      String @db.VarChar(255) // Snapshot
-  variantInfo      String @db.VarChar(255) // Snapshot
+  productName      String         @db.VarChar(255) // Snapshot
+  variantInfo      String         @db.VarChar(255) // Snapshot
   quantity         Int
   price            Float
   subtotal         Float
@@ -257,9 +288,9 @@ model ReturnItem {
   returnId         String
   productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
   productVariantId String
-  productName      String  @db.VarChar(255) // Snapshot
-  variantInfo      String  @db.VarChar(255) // Snapshot
-  sku              String? @db.VarChar(100) // Snapshot
+  productName      String         @db.VarChar(255) // Snapshot
+  variantInfo      String         @db.VarChar(255) // Snapshot
+  sku              String?        @db.VarChar(100) // Snapshot
   quantity         Int // Jumlah yang diretur
   price            Float // Harga saat transaksi
   subtotal         Float // quantity * price
@@ -270,28 +301,28 @@ model ReturnItem {
 
 // Cabang/Branch
 model Cabang {
-  id        String   @id @default(cuid())
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  tenantId  String
-  
-  name        String  @db.VarChar(100)
-  address   String?   @db.VarChar(500)
-  phone     String?   @db.VarChar(20)
+  id       String @id @default(cuid())
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  name      String   @db.VarChar(100)
+  address   String?  @db.VarChar(500)
+  phone     String?  @db.VarChar(20)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users              User[]
-  stocks             Stock[]
-  transactions       Transaction[]
-  returns            Return[]
-  cashTransactions   CashTransaction[]
-  printerSettings    PrinterSettings?
-  requestedOrders    Order[]
-  transfersFrom      StockTransfer[]  @relation("TransfersFrom")
-  transfersTo        StockTransfer[]  @relation("TransfersTo")
-  stockAdjustments   StockAdjustment[]
-  stockAlerts        StockAlert[]
+  users            User[]
+  stocks           Stock[]
+  transactions     Transaction[]
+  returns          Return[]
+  cashTransactions CashTransaction[]
+  printerSettings  PrinterSettings?
+  requestedOrders  Order[]
+  transfersFrom    StockTransfer[]   @relation("TransfersFrom")
+  transfersTo      StockTransfer[]   @relation("TransfersTo")
+  stockAdjustments StockAdjustment[]
+  stockAlerts      StockAlert[]
 
   @@unique([tenantId, name])
   @@map("cabang")
@@ -314,17 +345,18 @@ model Category {
 
 // Produk (Baju Seragam SD, Celana, dll)
 model Product {
-  id          String      @id @default(cuid())
-  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id          String        @id @default(cuid())
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId    String
-  name        String      @db.VarChar(255)
-  description String?     @db.VarChar(1000)
-  category    Category    @relation(fields: [categoryId], references: [id])
+  name        String        @db.VarChar(255)
+  description String?       @db.VarChar(1000)
+  category    Category      @relation(fields: [categoryId], references: [id])
   categoryId  String
-  productType ProductType @default(VARIANT) // SINGLE atau VARIANT
-  isActive    Boolean     @default(true)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  productType ProductType   @default(VARIANT) // SINGLE atau VARIANT
+  status      ProductStatus @default(ACTIVE) // ACTIVE, INACTIVE, ARCHIVED
+  isActive    Boolean       @default(true) // @deprecated - use status instead
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   variants     ProductVariant[]
   variantTypes VariantType[]
@@ -332,6 +364,7 @@ model Product {
   @@index([tenantId])
   @@index([categoryId])
   @@index([tenantId, isActive])
+  @@index([tenantId, status])
   @@map("products")
 }
 
@@ -367,24 +400,30 @@ enum ProductType {
   VARIANT // Produk dengan varian (harga di variant)
 }
 
+enum ProductStatus {
+  ACTIVE // Produk aktif, bisa dijual
+  INACTIVE // Produk nonaktif sementara
+  ARCHIVED // Produk diarsipkan (ada history transaksi)
+}
+
 // Variant Produk (Size/Nomor: 6, 8, 10, dst)
 model ProductVariant {
-  id           String   @id @default(cuid())
-  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id           String  @id @default(cuid())
+  product      Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   productId    String
-  variantName  String   @db.VarChar(150) // "Size | Color | Material" (pipe-separated, supports up to 3 attributes)
-  variantValue String   @db.VarChar(255) // "M | Red | Cotton" (pipe-separated values)
-  sku          String   @unique @db.VarChar(100) // SKU/Barcode
-  
+  variantName  String  @db.VarChar(150) // "Size | Color | Material" (pipe-separated, supports up to 3 attributes)
+  variantValue String  @db.VarChar(255) // "M | Red | Cotton" (pipe-separated values)
+  sku          String  @unique @db.VarChar(100) // SKU/Barcode
+
   // Marketplace fields (optional)
-  weight       Int?     // Weight in grams (for shipping calculation by marketplace)
-  length       Int?     // Length in cm
-  width        Int?     // Width in cm
-  height       Int?     // Height in cm
-  imageUrl     String?  @db.VarChar(500) // External image URL (for marketplace sync)
-  
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  weight   Int? // Weight in grams (for shipping calculation by marketplace)
+  length   Int? // Length in cm
+  width    Int? // Width in cm
+  height   Int? // Height in cm
+  imageUrl String? @db.VarChar(500) // External image URL (for marketplace sync)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   stocks             Stock[]
   channelStocks      ChannelStock[]
@@ -425,21 +464,21 @@ model Stock {
 
 // Stock Adjustment History
 model StockAdjustment {
-  id               String              @id @default(cuid())
-  productVariant   ProductVariant      @relation(fields: [productVariantId], references: [id])
+  id               String            @id @default(cuid())
+  productVariant   ProductVariant    @relation(fields: [productVariantId], references: [id])
   productVariantId String
-  stock            Stock               @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  stock            Stock             @relation(fields: [stockId], references: [id], onDelete: Cascade)
   stockId          String
-  cabang           Cabang              @relation(fields: [cabangId], references: [id])
+  cabang           Cabang            @relation(fields: [cabangId], references: [id])
   cabangId         String
-  adjustedBy       User                @relation(fields: [adjustedById], references: [id])
+  adjustedBy       User              @relation(fields: [adjustedById], references: [id])
   adjustedById     String
   previousQty      Int // Stok sebelumnya
   newQty           Int // Stok baru
   difference       Int // newQty - previousQty
   reason           AdjustmentReason?
-  notes            String? @db.VarChar(500) // Custom reason
-  createdAt        DateTime            @default(now())
+  notes            String?           @db.VarChar(500) // Custom reason
+  createdAt        DateTime          @default(now())
 
   @@index([cabangId])
   @@index([cabangId, createdAt])
@@ -458,60 +497,64 @@ enum AdjustmentReason {
 
 // Transaksi Penjualan (POS + Marketplace)
 model Transaction {
-  id             String            @id @default(cuid())
-  transactionNo  String            @unique // INV-20251107-0001
-  
+  id            String @id @default(cuid())
+  transactionNo String @unique // INV-20251107-0001
+
   // Channel & Status
-  channel        SalesChannel?     @relation(fields: [channelId], references: [id])
-  channelId      String?           // FK to SalesChannel (null = legacy POS)
-  status         TransactionStatus @default(COMPLETED) // Unified status
-  
+  channel   SalesChannel?     @relation(fields: [channelId], references: [id])
+  channelId String? // FK to SalesChannel (null = legacy POS)
+  status    TransactionStatus @default(COMPLETED) // Unified status
+
   // Branch & Staff
-  cabang         Cabang            @relation(fields: [cabangId], references: [id])
-  cabangId       String
-  kasir          User?             @relation(fields: [kasirId], references: [id])
-  kasirId        String?           // Optional - marketplace tidak perlu kasir
-  
-  // Customer Info
-  customerName   String?  @db.VarChar(100)
-  customerPhone  String?  @db.VarChar(20)
-  buyerUsername  String?  @db.VarChar(100) // Username pembeli di marketplace
-  
+  cabang   Cabang  @relation(fields: [cabangId], references: [id])
+  cabangId String
+  kasir    User?   @relation(fields: [kasirId], references: [id])
+  kasirId  String? // Optional - marketplace tidak perlu kasir
+
+  // Customer (optional relation)
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  customerId String?
+
+  // Customer Info (legacy/fallback jika tidak pakai Customer)
+  customerName  String? @db.VarChar(100)
+  customerPhone String? @db.VarChar(20)
+  buyerUsername String? @db.VarChar(100) // Username pembeli di marketplace
+
   // Amounts
-  subtotal       Float
-  discount       Float             @default(0)
-  tax            Float             @default(0)
-  shippingCost   Float             @default(0) // Ongkir
-  platformFee    Float             @default(0) // Fee marketplace
-  total          Float
-  
+  subtotal     Float
+  discount     Float @default(0)
+  tax          Float @default(0)
+  shippingCost Float @default(0) // Ongkir
+  platformFee  Float @default(0) // Fee marketplace
+  total        Float
+
   // Payment (for POS)
   paymentMethod  PaymentMethod?
-  paymentStatus  PaymentStatus     @default(COMPLETED)
-  bankName       String?  @db.VarChar(100)  // Nama bank untuk DEBIT/TRANSFER
-  referenceNo    String?  @db.VarChar(100)  // Nomor referensi/approval
-  cardLastDigits String?  @db.VarChar(4)    // 4 digit terakhir kartu (DEBIT)
-  
+  paymentStatus  PaymentStatus  @default(COMPLETED)
+  bankName       String?        @db.VarChar(100) // Nama bank untuk DEBIT/TRANSFER
+  referenceNo    String?        @db.VarChar(100) // Nomor referensi/approval
+  cardLastDigits String?        @db.VarChar(4) // 4 digit terakhir kartu (DEBIT)
+
   // Split Payment (POS only)
-  isSplitPayment Boolean           @default(false)
+  isSplitPayment Boolean        @default(false)
   paymentAmount1 Float?
   paymentMethod2 PaymentMethod?
   paymentAmount2 Float?
-  bankName2      String?  @db.VarChar(100)
-  referenceNo2   String?  @db.VarChar(100)
-  
+  bankName2      String?        @db.VarChar(100)
+  referenceNo2   String?        @db.VarChar(100)
+
   // External Marketplace Data
-  externalOrderId  String?  @db.VarChar(100) // Order ID dari marketplace
-  externalInvoice  String?  @db.VarChar(100) // Invoice/AWB number
-  externalStatus   String?  @db.VarChar(50)  // Status asli dari marketplace
-  externalData     Json?           // Data tambahan (shipping, courier, etc)
-  
+  externalOrderId String? @db.VarChar(100) // Order ID dari marketplace
+  externalInvoice String? @db.VarChar(100) // Invoice/AWB number
+  externalStatus  String? @db.VarChar(50) // Status asli dari marketplace
+  externalData    Json? // Data tambahan (shipping, courier, etc)
+
   // Device/Platform Source
-  deviceSource     String?  @db.VarChar(50) // WEB, ANDROID, IOS, WINDOWS, TOKOPEDIA, SHOPEE, etc
-  
-  notes          String?    @db.VarChar(1000)
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  deviceSource String? @db.VarChar(50) // WEB, ANDROID, IOS, WINDOWS, TOKOPEDIA, SHOPEE, etc
+
+  notes     String?  @db.VarChar(1000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   items              TransactionItem[]
   priceDiscrepancies PriceDiscrepancy[]
@@ -551,20 +594,20 @@ enum CashType {
 
 // Cash Transaction for tracking money in/out
 model CashTransaction {
-  id            String     @id @default(cuid())
+  id            String       @id @default(cuid())
   type          CashType
   amount        Float
-  description   String?    @db.VarChar(500)
-  cabang        Cabang     @relation(fields: [cabangId], references: [id])
+  description   String?      @db.VarChar(500)
+  cabang        Cabang       @relation(fields: [cabangId], references: [id])
   cabangId      String
-  return        Return?    @relation(fields: [returnId], references: [id])
+  return        Return?      @relation(fields: [returnId], references: [id])
   returnId      String?
   transaction   Transaction? @relation(fields: [transactionId], references: [id])
   transactionId String?
-  recordedBy    User       @relation(fields: [recordedById], references: [id])
+  recordedBy    User         @relation(fields: [recordedById], references: [id])
   recordedById  String
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@index([cabangId, createdAt])
   @@index([returnId])
@@ -579,9 +622,9 @@ model TransactionItem {
   transactionId    String
   productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
   productVariantId String
-  productName      String  @db.VarChar(255) // Snapshot nama produk
-  variantInfo      String  @db.VarChar(255) // Snapshot variant (Size: 10)
-  sku              String? @db.VarChar(100) // SKU snapshot
+  productName      String         @db.VarChar(255) // Snapshot nama produk
+  variantInfo      String         @db.VarChar(255) // Snapshot variant (Size: 10)
+  sku              String?        @db.VarChar(100) // SKU snapshot
   quantity         Int
   price            Float // Harga saat transaksi
   subtotal         Float
@@ -600,9 +643,9 @@ model PriceDiscrepancy {
   expectedPrice    Float // Current price in database
   actualPrice      Float // Price used in transaction (offline data)
   difference       Float // expectedPrice - actualPrice
-  reason           String  @db.VarChar(500) // Explanation
+  reason           String         @db.VarChar(500) // Explanation
   resolved         Boolean        @default(false)
-  resolvedBy       String? @db.VarChar(50) // User ID who resolved
+  resolvedBy       String?        @db.VarChar(50) // User ID who resolved
   resolvedAt       DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
@@ -647,28 +690,28 @@ model PrinterSettings {
 
 // Order Management - Product requests from KASIR
 model Order {
-  id              String      @id @default(cuid())
-  orderNo         String      @unique @db.VarChar(50) // ORD-20251126-0001
-  requestedBy     User        @relation("RequestedOrders", fields: [requestedById], references: [id])
-  requestedById   String
-  cabang          Cabang      @relation(fields: [cabangId], references: [id])
-  cabangId        String
-  productName     String      @db.VarChar(255)
-  productType     ProductType @default(SINGLE)
-  categoryId      String?
-  categoryName    String?     @db.VarChar(100)
-  price           Float?
-  quantity        Int?
-  status          OrderStatus @default(PENDING)
-  notes           String?     @db.VarChar(500)
-  rejectionReason String?     @db.VarChar(500)
-  processedBy     User?       @relation("ProcessedOrders", fields: [processedById], references: [id])
-  processedById   String?
-  processedAt     DateTime?
-  productVariant  ProductVariant? @relation(fields: [productVariantId], references: [id])
+  id               String          @id @default(cuid())
+  orderNo          String          @unique @db.VarChar(50) // ORD-20251126-0001
+  requestedBy      User            @relation("RequestedOrders", fields: [requestedById], references: [id])
+  requestedById    String
+  cabang           Cabang          @relation(fields: [cabangId], references: [id])
+  cabangId         String
+  productName      String          @db.VarChar(255)
+  productType      ProductType     @default(SINGLE)
+  categoryId       String?
+  categoryName     String?         @db.VarChar(100)
+  price            Float?
+  quantity         Int?
+  status           OrderStatus     @default(PENDING)
+  notes            String?         @db.VarChar(500)
+  rejectionReason  String?         @db.VarChar(500)
+  processedBy      User?           @relation("ProcessedOrders", fields: [processedById], references: [id])
+  processedById    String?
+  processedAt      DateTime?
+  productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id])
   productVariantId String? // Set when order is approved and product created
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   @@index([cabangId])
   @@index([status])

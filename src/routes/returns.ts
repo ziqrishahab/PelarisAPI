@@ -408,8 +408,9 @@ returns.post('/', rateLimiter({ max: 20 }), authMiddleware, async (c) => {
       exchangeItems,
     } = validation.data;
 
-    // Determine if this is an exchange (WRONG_SIZE or WRONG_ITEM with exchangeItems)
-    const isExchange = (reason === 'WRONG_SIZE' || reason === 'WRONG_ITEM') && exchangeItems && exchangeItems.length > 0;
+    // Determine if this is an exchange (any reason can have exchangeItems for replacement)
+    // This allows DEFECTIVE/DAMAGED items to be exchanged for new ones (write-off old + take new from stock)
+    const isExchange = exchangeItems && exchangeItems.length > 0;
 
     // Get transaction
     const transaction = await prisma.transaction.findUnique({
@@ -769,11 +770,17 @@ returns.patch('/:id/approve', authMiddleware, async (c) => {
         logger.info('Write-off items recorded as DAMAGED in StockAdjustment', {
           returnNo: returnData.returnNo,
           reason: returnData.reason,
+          isExchange, // Log if this is also an exchange
           items: returnData.items.map(i => ({ 
             productName: i.productName, 
             variantInfo: i.variantInfo, 
             quantity: i.quantity 
           })),
+          ...(isExchange && { exchangeItems: returnData.exchangeItems.map(e => ({
+            productName: e.productName,
+            variantInfo: e.variantInfo,
+            quantity: e.quantity
+          })) }),
         });
       }
 

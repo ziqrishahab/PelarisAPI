@@ -89,6 +89,12 @@ products.get('/', authMiddleware, async (c) => {
         };
         if (categoryId) where.categoryId = categoryId;
         if (isActive !== undefined) where.isActive = isActive === 'true';
+        
+        // Support status filter (ACTIVE, INACTIVE, ARCHIVED)
+        const statusParam = c.req.query('status');
+        if (statusParam) {
+          where.status = statusParam.toUpperCase();
+        }
 
         // Build search conditions
         if (search) {
@@ -790,11 +796,14 @@ products.delete('/:id', authMiddleware, ownerOrManager, async (c) => {
 
     const hasTransactions = product.variants.some(v => v.transactionItems.length > 0);
 
-    // Products with transactions are deactivated unless force=true is passed
+    // Products with transactions are archived unless force=true is passed
     if (hasTransactions && !forceDelete) {
       const updatedProduct = await prisma.product.update({
         where: { id },
-        data: { isActive: false }
+        data: { 
+          status: 'ARCHIVED',
+          isActive: false // Keep for backward compatibility
+        }
       });
 
       emitProductUpdated(updatedProduct, tenantId);
@@ -804,8 +813,8 @@ products.delete('/:id', authMiddleware, ownerOrManager, async (c) => {
       await clearProductCache(tenantId, updatedProduct?.id);
       
       return c.json({ 
-        message: 'Product has transaction history. Product has been deactivated instead of deleted.',
-        action: 'deactivated'
+        message: 'Produk memiliki riwayat transaksi. Produk telah diarsipkan.',
+        action: 'archived'
       });
     }
 
@@ -952,17 +961,20 @@ products.post('/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
       deletedCount = result.count;
     }
 
-    // Deactivate products with transactions
-    let deactivatedCount = 0;
+    // Archive products with transactions
+    let archivedCount = 0;
     if (productsWithTransactions.length > 0) {
       const result = await prisma.product.updateMany({
         where: {
           id: { in: productsWithTransactions },
           tenantId
         },
-        data: { isActive: false }
+        data: { 
+          status: 'ARCHIVED',
+          isActive: false // Keep for backward compatibility
+        }
       });
-      deactivatedCount = result.count;
+      archivedCount = result.count;
     }
 
     // Emit socket events for each product (scoped to tenant)
@@ -976,17 +988,17 @@ products.post('/bulk-delete', authMiddleware, ownerOrManager, async (c) => {
       tenantId,
       total: productIds.length,
       deleted: deletedCount,
-      deactivated: deactivatedCount,
+      archived: archivedCount,
     });
 
     return c.json({
       message: 'Bulk delete completed',
       total: productIds.length,
       deleted: deletedCount,
-      deactivated: deactivatedCount,
+      archived: archivedCount,
       details: {
         deletedIds: productsToDelete,
-        deactivatedIds: productsWithTransactions,
+        archivedIds: productsWithTransactions,
       }
     });
   } catch (error: any) {

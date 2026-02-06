@@ -138,9 +138,9 @@ vi.mock('../lib/socket', () => ({
 }));
 
 beforeAll(() => {
-  console.log('[TEST] Starting backend tests...');
+  // Test suite started
 });
 
 afterAll(() => {
-  console.log('[PASS] Backend tests completed');
+  // Test suite completed
 });
