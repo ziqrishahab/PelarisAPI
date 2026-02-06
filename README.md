@@ -566,6 +566,21 @@ sudo systemctl start redis
 
 ---
 
+## Changelog
+
+### v1.2.0 - February 6, 2026
+
+**Bug Fixes:**
+- Fixed returns approval - StockAdjustment now uses user.userId instead of returnData.processedById (which was null for PENDING returns)
+- Added DEFECTIVE to isWriteOff check - defective items now correctly recorded as DAMAGED in StockAdjustment
+- Updated write-off notes to show "Barang Cacat" for DEFECTIVE reason
+
+**Return Reasons Write-off Logic:**
+- DAMAGED, DEFECTIVE, EXPIRED: Items go to StockAdjustment (write-off), not returned to normal stock
+- WRONG_ITEM, WRONG_SIZE, CUSTOMER_REQUEST, OTHER: Items returned to normal stock
+
+---
+
 ## Support
 
 - Internal Documentation: Lihat README di root project
