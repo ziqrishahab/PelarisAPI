@@ -6,6 +6,7 @@ import logger, { logError } from '../lib/logger.js';
 import { validate, createReturnSchema, approveReturnSchema, rejectReturnSchema } from '../lib/validators.js';
 import { createAuditLog } from '../lib/audit.js';
 import { ERR, MSG } from '../lib/messages.js';
+import { emitStockUpdated } from '../lib/socket.js';
 
 type Variables = {
   user: AuthUser;
@@ -394,6 +395,7 @@ returns.post('/', rateLimiter({ max: 20 }), authMiddleware, async (c) => {
 
     const {
       transactionId,
+      cabangId: requestCabangId,
       reason,
       notes,
       items,
@@ -492,7 +494,6 @@ returns.post('/', rateLimiter({ max: 20 }), authMiddleware, async (c) => {
       productVariantId: string;
       productName: string;
       variantInfo: string;
-      sku: string;
       quantity: number;
       price: number;
       subtotal: number;
@@ -524,7 +525,6 @@ returns.post('/', rateLimiter({ max: 20 }), authMiddleware, async (c) => {
           productVariantId: variant.id,
           productName: variant.product.name,
           variantInfo: variant.variantValue,
-          sku: variant.sku,
           quantity: exItem.quantity,
           price,
           subtotal: itemSubtotal,
@@ -541,11 +541,11 @@ returns.post('/', rateLimiter({ max: 20 }), authMiddleware, async (c) => {
 
     // Create return with cash transaction
     const returnData = await prisma.$transaction(async (tx) => {
-      // Use cabangId from user if available, otherwise use transaction's cabangId
-      const returnCabangId = user.cabangId || transaction.cabangId;
+      // Use cabangId from request, user, or transaction (in that order of priority)
+      const returnCabangId = requestCabangId || user.cabangId || transaction.cabangId;
       
       if (!returnCabangId) {
-        throw new Error('Cannot determine cabang for return. Transaction has no cabangId.');
+        throw new Error('Cannot determine cabang for return. Please provide cabangId.');
       }
       
       const newReturn = await tx.return.create({
@@ -715,8 +715,8 @@ returns.patch('/:id/approve', authMiddleware, async (c) => {
 
     const isExchange = returnData.returnType === 'EXCHANGE';
     
-    // Check if this is a write-off reason (DAMAGED/EXPIRED - barang rusak tidak masuk stok)
-    const isWriteOff = returnData.reason === 'DAMAGED' || returnData.reason === 'EXPIRED';
+    // Check if this is a write-off reason (DAMAGED/DEFECTIVE/EXPIRED - barang rusak tidak masuk stok)
+    const isWriteOff = returnData.reason === 'DAMAGED' || returnData.reason === 'DEFECTIVE' || returnData.reason === 'EXPIRED';
 
     // Approve and update stock
     const updatedReturn = await prisma.$transaction(async (tx) => {
@@ -755,12 +755,12 @@ returns.patch('/:id/approve', authMiddleware, async (c) => {
                 productVariantId: item.productVariantId,
                 stockId: currentStock.id,
                 cabangId: returnData.cabangId,
-                adjustedById: returnData.processedById,
+                adjustedById: user.userId, // Use approving user, not processedById (which is null for PENDING)
                 previousQty: currentStock.quantity,
                 newQty: currentStock.quantity, // Quantity stays same (not returning)
                 difference: -item.quantity, // Negative = write-off
                 reason: 'DAMAGED',
-                notes: `Write-off dari return ${returnData.returnNo}: ${returnData.reason === 'EXPIRED' ? 'Barang Kadaluarsa' : 'Barang Rusak/Cacat'}`,
+                notes: `Write-off dari return ${returnData.returnNo}: ${returnData.reason === 'EXPIRED' ? 'Barang Kadaluarsa' : returnData.reason === 'DEFECTIVE' ? 'Barang Cacat' : 'Barang Rusak'}`,
               },
             });
           }
@@ -865,6 +865,13 @@ returns.patch('/:id/approve', authMiddleware, async (c) => {
       returnType: returnData.returnType,
       refundAmount: returnData.refundAmount,
       priceDifference: returnData.priceDifference,
+    });
+
+    // Emit stock update event for real-time UI updates
+    emitStockUpdated({
+      cabangId: returnData.cabangId,
+      action: isWriteOff ? 'write_off' : 'return_approved',
+      returnNo: returnData.returnNo,
     });
 
     return c.json({ return: updatedReturn });

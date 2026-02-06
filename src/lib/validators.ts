@@ -109,6 +109,7 @@ export const exchangeItemSchema = z.object({
 
 export const createReturnSchema = z.object({
   transactionId: z.string().min(1, 'Transaction ID wajib diisi'),
+  cabangId: z.string().min(1, 'Cabang ID wajib diisi').optional(),
   reason: z.enum(returnReasons),
   reasonDetail: z.string().optional(),
   notes: z.string().optional(),

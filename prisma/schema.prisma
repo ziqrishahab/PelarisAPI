@@ -236,7 +236,9 @@ model ExchangeItem {
 
 enum ReturnReason {
   DAMAGED // Barang Rusak
+  DEFECTIVE // Barang Cacat
   WRONG_ITEM // Salah Barang
+  WRONG_SIZE // Salah Ukuran
   EXPIRED // Kadaluarsa
   CUSTOMER_REQUEST // Permintaan Customer
   OTHER // Lainnya
