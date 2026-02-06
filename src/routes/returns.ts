@@ -872,6 +872,7 @@ returns.patch('/:id/approve', authMiddleware, async (c) => {
       cabangId: returnData.cabangId,
       action: isWriteOff ? 'write_off' : 'return_approved',
       returnNo: returnData.returnNo,
+      quantity: 0, // Placeholder - actual stock changes already applied in transaction
     });
 
     return c.json({ return: updatedReturn });
