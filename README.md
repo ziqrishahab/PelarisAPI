@@ -31,6 +31,8 @@ Key Features:
 - Comprehensive error logging (Winston)
 - Rate limiting dan CSRF protection
 - Password reset dengan token expiry
+- Customer management dengan loyalty tracking
+- Product status lifecycle (ACTIVE, INACTIVE, ARCHIVED)
 - API Documentation: Swagger/OpenAPI 3.0 di /api/docs
 - Error Monitoring: Sentry integration
 
@@ -309,6 +311,18 @@ atau menggunakan HttpOnly Cookie (automatic dari browser).
 | PUT | /api/cabang/:id | Update cabang |
 | DELETE | /api/cabang/:id | Delete cabang |
 
+#### Customers
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/customers | List customers (pagination) |
+| GET | /api/customers/:id | Get customer detail |
+| GET | /api/customers/search/phone | Search by phone |
+| POST | /api/customers | Create customer |
+| PUT | /api/customers/:id | Update customer |
+| DELETE | /api/customers/:id | Delete/deactivate customer |
+| GET | /api/customers/:id/stats | Get customer stats |
+
 #### Settings
 
 | Method | Endpoint | Description |
@@ -395,6 +409,7 @@ backend/
 |   |   |-- returns.ts
 |   |   |-- categories.ts
 |   |   |-- cabang.ts
+|   |   |-- customers.ts
 |   |   |-- settings.ts
 |   |   |-- backup.ts
 |   |   +-- sync.ts
@@ -567,6 +582,20 @@ sudo systemctl start redis
 ---
 
 ## Changelog
+
+### v2.1.0 - February 6, 2026
+
+**New Features:**
+- Customer management with full CRUD operations
+- Customer loyalty tracking (totalSpent, totalOrders, points)
+- ProductStatus enum (ACTIVE, INACTIVE, ARCHIVED)
+- Smart product deletion - archive instead of delete when has transactions
+- API versioning for Flutter mobile app (/api/v1)
+
+**Database Changes:**
+- Added Customer model with tenant relation
+- Added Transaction.customerId relation
+- Added Product.status field with ProductStatus enum
 
 ### v1.2.0 - February 6, 2026
 
