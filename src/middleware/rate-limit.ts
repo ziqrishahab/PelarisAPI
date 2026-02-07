@@ -261,3 +261,53 @@ export function apiRateLimiter(options: RateLimitOptions = {}) {
     ...options
   });
 }
+
+/**
+ * Rate limiter for authenticated endpoints (per user)
+ * Uses user ID instead of IP for fairer limiting
+ * Default: 100 requests per minute per user
+ * 
+ * Usage: Apply AFTER authMiddleware
+ */
+export function userRateLimiter(options: RateLimitOptions = {}) {
+  return rateLimiter({
+    windowMs: 60 * 1000,       // 1 minute
+    max: 100,                  // 100 requests per minute per user
+    message: 'Rate limit exceeded for your account. Please slow down.',
+    keyGenerator: async (c: Context) => {
+      // Try to get user from context (set by authMiddleware)
+      const user = c.get('user');
+      if (user?.userId) {
+        return `user:${user.userId}`;
+      }
+      // Fallback to IP if not authenticated
+      const { getClientIP } = await import('../lib/utils.js');
+      return `ip:${getClientIP(c)}`;
+    },
+    ...options
+  });
+}
+
+/**
+ * Rate limiter per tenant
+ * Limits requests across all users in a tenant
+ * Default: 1000 requests per minute per tenant
+ */
+export function tenantRateLimiter(options: RateLimitOptions = {}) {
+  return rateLimiter({
+    windowMs: 60 * 1000,       // 1 minute
+    max: 1000,                 // 1000 requests per minute per tenant
+    message: 'Rate limit exceeded for your organization. Please contact support.',
+    keyGenerator: async (c: Context) => {
+      // Try to get tenant from context (set by authMiddleware)
+      const user = c.get('user');
+      if (user?.tenantId) {
+        return `tenant:${user.tenantId}`;
+      }
+      // Fallback to IP if not authenticated
+      const { getClientIP } = await import('../lib/utils.js');
+      return `ip:${getClientIP(c)}`;
+    },
+    ...options
+  });
+}

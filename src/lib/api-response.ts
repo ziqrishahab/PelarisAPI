@@ -39,6 +39,7 @@ export interface ApiErrorResponse {
   error: string;
   code?: string;
   details?: Record<string, string[]>;
+  requestId?: string;
 }
 
 /**
@@ -110,6 +111,7 @@ export function created<T>(
 
 /**
  * Create an error response
+ * Automatically includes requestId for debugging
  */
 export function error(
   c: Context,
@@ -120,11 +122,15 @@ export function error(
     details?: Record<string, string[]>;
   }
 ): Response {
+  // Get requestId from context (set by request-id middleware)
+  const requestId = c.get('requestId') as string | undefined;
+  
   const response: ApiErrorResponse = {
     success: false,
     error: errorMessage,
     ...(options?.code && { code: options.code }),
     ...(options?.details && { details: options.details }),
+    ...(requestId && { requestId }),
   };
   
   return c.json(response, status as ContentfulStatusCode);

@@ -10,6 +10,7 @@ import logger, { logAuth, logError } from '../lib/logger.js';
 import { validate, loginSchema, registerSchema, createUserSchema, updateUserSchema } from '../lib/validators.js';
 import { ERR, MSG } from '../lib/messages.js';
 import { createAuditLog } from '../lib/audit.js';
+import config from '../config/index.js';
 
 const auth = new Hono();
 
@@ -42,7 +43,7 @@ auth.post('/register', strictRateLimiter({ max: isDev ? 50 : 5 }), async (c) => 
       return c.json({ error: 'Email sudah terdaftar' }, 400);
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12); // Increased from 10 to 12 for better security
+    const hashedPassword = await bcrypt.hash(password, config.security.bcryptSaltRounds);
 
     // Use transaction for atomic user + cabang + printer settings creation
     const result = await prisma.$transaction(async (tx) => {
@@ -116,10 +117,10 @@ auth.post('/register', strictRateLimiter({ max: isDev ? 50 : 5 }), async (c) => 
     // Set HttpOnly cookie (best effort, frontend masih bisa pakai token di body)
     setCookie(c, 'token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.env.IS_PROD,
       sameSite: 'Lax',
       path: '/',
-      maxAge: 7 * 24 * 60 * 60, // 7 days
+      maxAge: config.security.jwtCookieMaxAge,
     });
 
     return c.json({ message: 'User berhasil dibuat', user, token, csrfToken, storeName }, 201);
@@ -211,10 +212,10 @@ auth.post('/login', loginRateLimiter({ max: isDev ? 100 : 10 }), async (c) => {
     // Set HttpOnly cookie (best effort)
     setCookie(c, 'token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.env.IS_PROD,
       sameSite: 'Lax',
       path: '/',
-      maxAge: 7 * 24 * 60 * 60, // 7 days
+      maxAge: config.security.jwtCookieMaxAge,
     });
 
     return c.json({ message: 'Login berhasil', user: { ...userWithoutPassword, storeName }, token, csrfToken });
@@ -369,7 +370,7 @@ auth.post('/users', rateLimiter({ max: 10 }), authMiddleware, ownerOnly, async (
       return c.json({ error: 'Email sudah terdaftar' }, 400);
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12); // Increased from 10 to 12 for better security
+    const hashedPassword = await bcrypt.hash(password, config.security.bcryptSaltRounds);
 
     const user = await prisma.user.create({
       data: {
@@ -464,7 +465,7 @@ auth.put('/users/:id', rateLimiter({ max: 20 }), authMiddleware, ownerOnly, asyn
     }
 
     if (password && password.trim() !== '') {
-      updateData.password = await bcrypt.hash(password, 12); // Increased from 10 to 12 for better security
+      updateData.password = await bcrypt.hash(password, config.security.bcryptSaltRounds);
     }
 
     const user = await prisma.user.update({
@@ -676,7 +677,7 @@ auth.post('/reset-password', strictRateLimiter({ max: isDev ? 20 : 5 }), async (
     }
 
     // Update password
-    const hashedPassword = await bcrypt.hash(password, 12);
+    const hashedPassword = await bcrypt.hash(password, config.security.bcryptSaltRounds);
     await prisma.user.update({
       where: { id: user.id },
       data: { password: hashedPassword }

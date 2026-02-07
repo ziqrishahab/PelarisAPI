@@ -39,18 +39,19 @@ export const authMiddleware = async (c: Context, next: Next): Promise<Response |
       return c.json({ error: ERR.TOKEN_INVALID }, 401);
     }
 
-    // CSRF protection disabled - already protected by Authorization bearer token
-    // The auth token in header/cookie provides sufficient CSRF protection
-    // as attackers cannot read or forge the token from another origin
-    
-    // Original CSRF code kept for reference:
-    // const method = c.req.method.toUpperCase();
-    // const isSafeMethod = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
-    // const csrfToken = (decoded as AuthUser & { csrfToken?: string }).csrfToken;
-    // const csrfHeader = c.req.header('x-csrf-token');
-    // if (!isSafeMethod && csrfToken && csrfHeader !== csrfToken) {
-    //   return c.json({ error: ERR.CSRF_INVALID }, 403);
-    // }
+    // CSRF PROTECTION STATUS: DISABLED (Intentional)
+    // 
+    // Why CSRF is not needed for this API:
+    // 1. Primary auth uses Bearer token in Authorization header
+    //    - Attackers cannot read or inject headers from cross-origin requests
+    //    - This is the OWASP recommended approach for APIs
+    // 2. HttpOnly cookies use SameSite=Lax attribute
+    //    - Prevents cookies from being sent in cross-origin POST requests
+    // 3. CORS policy restricts which origins can make requests
+    //    - Only whitelisted origins in config.cors.allowedOrigins
+    //
+    // Reference: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+    // Section: "Token Based (Stateless) Technique"
 
     c.set('user', decoded);
     await next();

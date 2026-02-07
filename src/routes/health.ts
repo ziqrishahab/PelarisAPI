@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import prisma from '../lib/prisma.js';
-import { isRedisAvailable } from '../lib/redis.js';
+import { isRedisAvailable, isRedisConfigured } from '../lib/redis.js';
+import { getIO } from '../lib/socket.js';
 import logger from '../lib/logger.js';
 
 const health = new Hono();
@@ -11,7 +12,7 @@ const health = new Hono();
  */
 health.get('/', async (c) => {
   const startTime = Date.now();
-  const checks: Record<string, { status: string; message?: string; latency?: number }> = {};
+  const checks: Record<string, { status: string; message?: string; latency?: number; details?: Record<string, unknown> }> = {};
 
   // Check database connection
   try {
@@ -30,9 +31,14 @@ health.get('/', async (c) => {
 
   // Check Redis connection (optional)
   try {
+    const redisConfigured = isRedisConfigured();
     checks.redis = {
-      status: isRedisAvailable() ? 'healthy' : 'unavailable',
-      message: isRedisAvailable() ? undefined : 'Redis not configured or unavailable',
+      status: redisConfigured 
+        ? (isRedisAvailable() ? 'healthy' : 'degraded')
+        : 'not_configured',
+      message: !redisConfigured 
+        ? 'Using in-memory fallback' 
+        : (isRedisAvailable() ? undefined : 'Redis unavailable, using in-memory fallback'),
     };
   } catch (error) {
     checks.redis = {
@@ -41,6 +47,34 @@ health.get('/', async (c) => {
     };
   }
 
+  // Check Socket.io
+  const io = getIO();
+  if (io) {
+    const sockets = await io.fetchSockets();
+    checks.websocket = {
+      status: 'healthy',
+      details: {
+        connectedClients: sockets.length,
+      },
+    };
+  } else {
+    checks.websocket = {
+      status: 'unavailable',
+      message: 'Socket.io not initialized',
+    };
+  }
+
+  // Memory usage
+  const memUsage = process.memoryUsage();
+  checks.memory = {
+    status: 'healthy',
+    details: {
+      heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+      heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+      rssMB: Math.round(memUsage.rss / 1024 / 1024),
+    },
+  };
+
   // Overall health status
   const isHealthy = checks.database.status === 'healthy';
   const status = isHealthy ? 'healthy' : 'unhealthy';
@@ -48,8 +82,9 @@ health.get('/', async (c) => {
 
   const response = {
     status,
+    version: process.env.npm_package_version || '1.0.0',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
+    uptime: Math.round(process.uptime()),
     checks,
     responseTime: Date.now() - startTime,
   };

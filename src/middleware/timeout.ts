@@ -1,12 +1,13 @@
 import { MiddlewareHandler } from 'hono';
 import logger from '../lib/logger.js';
+import config from '../config/index.js';
 
 /**
  * Request timeout middleware
  * Prevents requests from hanging indefinitely
  * @param timeoutMs - Timeout in milliseconds (default: 30 seconds)
  */
-export const timeout = (timeoutMs: number = 30000): MiddlewareHandler => {
+export const timeout = (timeoutMs: number = config.timeout.default): MiddlewareHandler => {
   return async (c, next) => {
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => {
@@ -27,6 +28,7 @@ export const timeout = (timeoutMs: number = 30000): MiddlewareHandler => {
           {
             error: 'Request timeout',
             message: 'Permintaan memakan waktu terlalu lama',
+            code: 'REQUEST_TIMEOUT',
           },
           408
         );
@@ -34,4 +36,23 @@ export const timeout = (timeoutMs: number = 30000): MiddlewareHandler => {
       throw error;
     }
   };
+};
+
+/**
+ * Long timeout middleware for export/import operations
+ * Default: 2 minutes (configurable via LONG_REQUEST_TIMEOUT env)
+ */
+export const longTimeout = (): MiddlewareHandler => {
+  return timeout(config.timeout.long);
+};
+
+/**
+ * Custom timeout middleware factory
+ * Use for specific routes that need different timeouts
+ * 
+ * Example usage:
+ * router.post('/export', customTimeout(120000), handler)
+ */
+export const customTimeout = (ms: number): MiddlewareHandler => {
+  return timeout(ms);
 };
